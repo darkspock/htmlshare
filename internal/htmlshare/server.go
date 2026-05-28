@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1753,6 +1754,7 @@ func (s *Server) publicationAsset(w http.ResponseWriter, r *http.Request) {
 		ctype = http.DetectContentType(raw)
 	}
 	if file == "index.html" && strings.Contains(ctype, "text/html") {
+		raw = s.redactPublicationAccessTargets(raw, publication)
 		raw = injectCommentWidget(raw, publication.Slug)
 	}
 	setPrivateRevalidateCache(w)
@@ -2530,6 +2532,44 @@ func normalizeShareTargets(values []string) ([]string, error) {
 		targets = append(targets, target)
 	}
 	return targets, nil
+}
+
+func (s *Server) redactPublicationAccessTargets(raw []byte, publication Publication) []byte {
+	if publication.Visibility != "recipients" && publication.Visibility != "signed" {
+		return raw
+	}
+	var targets []string
+	_ = s.Store.ReadDB(func(db DB) error {
+		for _, share := range db.Shares {
+			if share.PublicationID == publication.ID && share.Email != "" {
+				targets = append(targets, strings.ToLower(strings.TrimSpace(share.Email)))
+			}
+		}
+		for _, token := range db.SignedTokens {
+			if token.PublicationID == publication.ID && token.Email != "" {
+				targets = append(targets, strings.ToLower(strings.TrimSpace(token.Email)))
+			}
+		}
+		return nil
+	})
+	if len(targets) == 0 {
+		return raw
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return len(targets[i]) > len(targets[j])
+	})
+	body := string(raw)
+	for _, target := range targets {
+		if target == "" {
+			continue
+		}
+		replacement := "authorized recipient"
+		if strings.HasPrefix(target, "@") {
+			replacement = "authorized domain"
+		}
+		body = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(target)).ReplaceAllString(body, replacement)
+	}
+	return []byte(body)
 }
 
 func domainShareMatches(shareTarget, email string) bool {

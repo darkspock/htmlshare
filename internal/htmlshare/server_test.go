@@ -218,7 +218,7 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 		"visibility":  "recipients",
 		"ttl_seconds": 3600,
 		"files": map[string]string{
-			"index.html": "<!doctype html><html><body><h1>Recipient-only fast file</h1></body></html>",
+			"index.html": "<!doctype html><html><body><h1>Recipient-only fast file</h1><p>Visible only by reader@example.com.</p></body></html>",
 		},
 		"share": map[string]any{
 			"emails":  []string{"reader@example.com"},
@@ -287,6 +287,9 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	if openResp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Recipient-only fast file") {
 		t.Fatalf("magic POST final status/body = %d %q", openResp.StatusCode, string(raw))
 	}
+	if strings.Contains(strings.ToLower(string(raw)), "reader@example.com") {
+		t.Fatalf("magic POST leaked recipient email in body: %q", string(raw))
+	}
 
 	viewResp, err := client.Get(publicURL)
 	if err != nil {
@@ -299,6 +302,9 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	}
 	if viewResp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Recipient-only fast file") {
 		t.Fatalf("recipient view status/body = %d %q", viewResp.StatusCode, string(raw))
+	}
+	if strings.Contains(strings.ToLower(string(raw)), "reader@example.com") {
+		t.Fatalf("recipient view leaked recipient email in body: %q", string(raw))
 	}
 }
 
