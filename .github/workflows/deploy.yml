@@ -50,6 +50,8 @@ jobs:
     needs: build
     environment: production
     steps:
+      - uses: actions/checkout@v4
+
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -74,10 +76,13 @@ jobs:
           USER="${DEPLOY_USER:-root}"
           GHCR_USER="${GHCR_READ_USER:-$GITHUB_ACTOR}"
           SSH="ssh -i ~/.ssh/deploy_key -p ${PORT} ${USER}@${DEPLOY_HOST}"
+          SCP="scp -i ~/.ssh/deploy_key -P ${PORT}"
 
           if [ -n "${GHCR_READ_TOKEN:-}" ]; then
             printf '%s' "$GHCR_READ_TOKEN" | $SSH "docker login ghcr.io -u '${GHCR_USER}' --password-stdin"
           fi
+
+          $SCP deploy/docker-compose.prod.yml "${USER}@${DEPLOY_HOST}:/opt/htmlshare/docker-compose.yml"
 
           $SSH "set -e
             cd /opt/htmlshare

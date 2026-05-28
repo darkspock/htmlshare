@@ -1,14 +1,21 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"htmlshare/internal/htmlshare"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		healthcheck()
+		return
+	}
+
 	port := env("PORT", "4545")
 	appURL := env("APP_URL", "http://localhost:"+port)
 	dataDir := env("DATA_DIR", "data")
@@ -43,6 +50,20 @@ func main() {
 	}
 	log.Printf("htmlshare listening on %s", appURL)
 	log.Fatal(http.ListenAndServe(":"+port, server.Routes()))
+}
+
+func healthcheck() {
+	port := env("PORT", "4545")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Fatalf("healthcheck failed: %s", resp.Status)
+	}
 }
 
 func env(key, fallback string) string {
