@@ -644,6 +644,62 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	})
 }
 
+func TestSharingSignedPublicationCreatesSignedInvitation(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	confirmed := now
+	owner := User{ID: "usr_owner", Email: "owner@example.com", Provider: "magic", EmailConfirmedAt: &confirmed, CreatedAt: now}
+	publication := Publication{ID: "pub_signed_share", OwnerID: owner.ID, Title: "Signed Share", Slug: "signed-share", Visibility: "signed", RequireRegistration: true, Files: []string{"index.html"}, CreatedAt: now}
+	ownerSession := Session{ID: "ses_owner", UserID: owner.ID, ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err := store.WithDB(func(db *DB) error {
+		db.Users = append(db.Users, owner)
+		db.Publications = append(db.Publications, publication)
+		db.Sessions = append(db.Sessions, ownerSession)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+		Mailer:        Mailer{DataDir: store.DataDir(), From: "test@example.com"},
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	ownerJar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerClient := &http.Client{Jar: ownerJar}
+	ownerClient.Jar.SetCookies(mustURL(t, ts.URL), []*http.Cookie{SessionCookie(ownerSession.ID, server.SessionSecret)})
+
+	resp := postJSONWithClient(t, ownerClient, ts.URL+"/api/share", "", map[string]any{
+		"id":      publication.ID,
+		"emails":  []string{"reader@example.com"},
+		"message": "Please review and sign.",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("share status = %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	_ = store.ReadDB(func(db DB) error {
+		if len(db.Shares) != 1 {
+			t.Fatalf("shares = %d, want 1", len(db.Shares))
+		}
+		if len(db.SignedTokens) != 1 {
+			t.Fatalf("signed tokens = %d, want 1", len(db.SignedTokens))
+		}
+		return nil
+	})
+}
+
 func assertUserConfirmed(t *testing.T, store *Store, email string, want bool) {
 	t.Helper()
 	var got bool

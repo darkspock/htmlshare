@@ -1268,7 +1268,15 @@ func (s *Server) createShares(w http.ResponseWriter, publication Publication, em
 		return
 	}
 	for _, target := range targets {
-		_, err := s.sharePublication(publication, target, message)
+		if publication.Visibility == "signed" {
+			if strings.HasPrefix(target, "@") {
+				http.Error(w, "signed access requires specific email recipients", http.StatusBadRequest)
+				return
+			}
+			_, _, err = s.createSignedAccessForEmail(publication, target, message)
+		} else {
+			_, err = s.sharePublication(publication, target, message)
+		}
 		if err == nil {
 			shareCount++
 		}
@@ -1532,9 +1540,18 @@ func (s *Server) createSignedAccess(w http.ResponseWriter, r *http.Request, publ
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if !strings.Contains(email, "@") {
-		http.Error(w, "valid email required", http.StatusBadRequest)
+	token, link, err := s.createSignedAccessForEmail(publication, email, req.Message)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"email": email, "signed_url": link, "expires_at": token.ExpiresAt})
+}
+
+func (s *Server) createSignedAccessForEmail(publication Publication, email, message string) (SignedAccessToken, string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !strings.Contains(email, "@") {
+		return SignedAccessToken{}, "", errors.New("valid email required")
 	}
 	now := time.Now()
 	raw := "hsa_" + RandomToken(32)
@@ -1575,14 +1592,13 @@ func (s *Server) createSignedAccess(w http.ResponseWriter, r *http.Request, publ
 		db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: email, UserID: userID, CreatedAt: now})
 		return nil
 	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return SignedAccessToken{}, "", err
 	}
 	link := s.AppURL + "/auth/signed?token=" + raw
-	text := strings.TrimSpace(req.Message + "\n\nLegal signed access for " + publication.Title + "\n" + link)
-	html := `<p>` + htmlEscape(req.Message) + `</p><p>Legal signed access for <strong>` + htmlEscape(publication.Title) + `</strong>:</p><p><a href="` + link + `">Open signed link</a></p>`
+	text := strings.TrimSpace(message + "\n\nLegal signed access for " + publication.Title + "\n" + link)
+	html := `<p>` + htmlEscape(message) + `</p><p>Legal signed access for <strong>` + htmlEscape(publication.Title) + `</strong>:</p><p><a href="` + link + `">Open signed link</a></p>`
 	_ = s.Mailer.Send(email, "Signed access: "+publication.Title, text, html)
-	writeJSON(w, http.StatusCreated, map[string]any{"email": email, "signed_url": link, "expires_at": token.ExpiresAt})
+	return token, link, nil
 }
 
 func (s *Server) abuseReports(w http.ResponseWriter, r *http.Request) {
