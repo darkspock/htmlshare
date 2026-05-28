@@ -16,6 +16,7 @@ import {
   KeyRound,
   Library,
   Lock,
+  LogOut,
   Mail,
   MoreHorizontal,
   Plus,
@@ -376,6 +377,15 @@ function App() {
     setNotice(`Help link copied. Paste ${llmsHelpUrl} into your LLM and ask how to use htmlshare.`);
   }
 
+  async function logout() {
+    await api<{ ok: boolean }>("/api/session", { method: "DELETE" });
+    setSession({ user: null });
+    setPublications([]);
+    setSelectedId("");
+    setApiKey("");
+    setNotice("Signed out.");
+  }
+
   if (!session.user) {
     return (
       <Onboarding
@@ -391,7 +401,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar active={active} setActive={setActive} user={session.user} queued={publications.length} />
+      <Sidebar active={active} setActive={setActive} user={session.user} queued={publications.length} onLogout={logout} />
       <div className="main-column">
         <TopBar active={active} user={session.user} onHelp={copyHelpLink} />
         <main className="workspace">
@@ -1100,7 +1110,19 @@ function SettingsView({ user, sendMagicLink }: { user: User; sendMagicLink: (ema
   );
 }
 
-function Sidebar({ active, setActive, user, queued }: { active: NavKey; setActive: (key: NavKey) => void; user: User; queued: number }) {
+function Sidebar({
+  active,
+  setActive,
+  user,
+  queued,
+  onLogout
+}: {
+  active: NavKey;
+  setActive: (key: NavKey) => void;
+  user: User;
+  queued: number;
+  onLogout: () => void;
+}) {
   return (
     <aside className="sidebar">
       <Brand />
@@ -1119,6 +1141,9 @@ function Sidebar({ active, setActive, user, queued }: { active: NavKey; setActiv
           <b>{user.name || user.email.split("@")[0]}</b>
           <small>{user.email}</small>
         </span>
+        <button onClick={onLogout} title="Sign out" aria-label="Sign out">
+          <LogOut size={15} />
+        </button>
       </div>
     </aside>
   );

@@ -493,6 +493,24 @@ a {
   flex-direction: column;
 }
 
+.user-card button {
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--charcoal-40);
+  cursor: pointer;
+}
+
+.user-card button:hover {
+  color: var(--off-white);
+  border-color: var(--charcoal-40);
+}
+
 .user-card b,
 .user-card small {
   overflow: hidden;

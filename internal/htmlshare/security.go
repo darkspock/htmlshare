@@ -47,6 +47,18 @@ func SessionCookie(sessionID, secret string) *http.Cookie {
 	}
 }
 
+func ExpiredSessionCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     "hs_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+		Expires:  time.Now().Add(-time.Hour),
+	}
+}
+
 func VerifySessionCookie(r *http.Request, secret string) string {
 	cookie, err := r.Cookie("hs_session")
 	if err != nil {

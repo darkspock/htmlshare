@@ -461,6 +461,26 @@ func (s *Server) aiSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		sessionID := VerifySessionCookie(r, s.SessionSecret)
+		if sessionID != "" {
+			_ = s.Store.WithDB(func(db *DB) error {
+				for i := range db.Sessions {
+					if db.Sessions[i].ID == sessionID {
+						db.Sessions[i].ExpiresAt = time.Now().Add(-time.Hour)
+					}
+				}
+				return nil
+			})
+		}
+		http.SetCookie(w, ExpiredSessionCookie())
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
 	user := s.currentUser(r)
 	if user == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"user": nil})

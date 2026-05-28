@@ -713,6 +713,64 @@ func TestCacheHeaders(t *testing.T) {
 	}
 }
 
+func TestSessionLogoutExpiresCookieAndSession(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	confirmed := now
+	user := User{ID: "usr_logout", Email: "logout@example.com", Provider: "magic", EmailConfirmedAt: &confirmed, CreatedAt: now}
+	session := Session{ID: "ses_logout", UserID: user.ID, ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err := store.WithDB(func(db *DB) error {
+		db.Users = append(db.Users, user)
+		db.Sessions = append(db.Sessions, session)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: store, AppURL: "http://example.test", SessionSecret: "test-secret"}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	client.Jar.SetCookies(mustURL(t, ts.URL), []*http.Cookie{SessionCookie(session.ID, server.SessionSecret)})
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("logout status = %d", resp.StatusCode)
+	}
+
+	sessionResp, err := client.Get(ts.URL + "/api/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	decode(t, sessionResp, &body)
+	if body["user"] != nil {
+		t.Fatalf("session user after logout = %v, want nil", body["user"])
+	}
+	_ = store.ReadDB(func(db DB) error {
+		if !db.Sessions[0].ExpiresAt.Before(time.Now()) {
+			t.Fatalf("stored session was not expired")
+		}
+		return nil
+	})
+}
+
 func latestOutboxLink(t *testing.T, store *Store) string {
 	t.Helper()
 	raw, err := os.ReadFile(store.DataDir() + "/outbox.jsonl")
