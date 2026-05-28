@@ -125,6 +125,7 @@ Rules for fast publish:
 - Store the `agent_id` in the conversation memory or local session state when available.
 - Use `visibility: "public"` or omit `visibility` for a normal temporary link.
 - Use `visibility: "recipients"` plus `share.emails` when the user says only specific people should read it. This does not require an `hsk_...` token.
+- Do not write recipient emails, allowed domains, access lists, magic links, or who-can-read details inside the HTML content. Access control is handled by htmlshare.
 - Do not publish secrets, credentials, private keys, internal tokens, or sensitive personal data.
 - Keep `ttl_seconds` under one week. Shorter is better for temporary reports.
 
@@ -153,7 +154,7 @@ Content-Type: application/json
 }
 ```
 
-Successful response includes the publication URL and recipient share URLs:
+Successful response includes the publication URL and a share count:
 
 ```json
 {
@@ -162,12 +163,7 @@ Successful response includes the publication URL and recipient share URLs:
   "url": "https://share.metricauno.com/f/private-review-file-.../",
   "mode": "fast",
   "visibility": "recipients",
-  "shares": [
-    {
-      "email": "extjmv@gmail.com",
-      "url": "https://share.metricauno.com/auth/magic?token=hml_..."
-    }
-  ],
+  "share_count": 1,
   "expires_at": "2026-05-29T10:00:00Z"
 }
 ```
@@ -179,6 +175,8 @@ Important behavior:
 - The email link opens a confirmation page with a button; crawler or Gmail prefetch should not consume it.
 - After confirmation, htmlshare sets a session and redirects the recipient to the file.
 - Anyone else opening the public URL without a matching confirmed session gets access denied.
+- If the public URL returns `403 access denied` during agent testing, that is expected for recipient-restricted files. Do not report it as a failure; tell the user the recipient must open the email link.
+- When you create the HTML file, do not display the recipient email or allowed domain in the page body. Use neutral wording such as "Restricted file" if the document needs a heading.
 - Use registered mode only if the user asks for account ownership, dashboard management, longer-lived storage, signed legal proof, domain allow-lists, or reusable automation keys.
 
 ## Registered account setup

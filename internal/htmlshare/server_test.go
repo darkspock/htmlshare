@@ -234,9 +234,8 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 		t.Fatalf("visibility = %v, want recipients", body["visibility"])
 	}
 	publicURL := body["url"].(string)
-	shares := body["shares"].([]any)
-	if len(shares) != 1 {
-		t.Fatalf("shares = %d, want 1", len(shares))
+	if body["share_count"] != float64(1) {
+		t.Fatalf("share_count = %v, want 1", body["share_count"])
 	}
 
 	anonymousResp, err := http.Get(publicURL)

@@ -110,7 +110,7 @@ SESSION_SECRET=change-me
 
 # Optional email. Without RESEND_API_KEY, email is written to data/outbox.jsonl.
 RESEND_API_KEY=
-EMAIL_FROM=htmlshare@example.com
+EMAIL_FROM="htmlshare <noreply@metricauno.com>"
 
 # Optional Mailgun alternative. Used before Resend when configured.
 MAILGUN_API_KEY=
@@ -119,8 +119,8 @@ MAILGUN_FROM_EMAIL=
 
 # Optional Brevo alternative. Used before Mailgun and Resend when configured.
 BREVO_API_KEY=
-BREVO_SENDER_EMAIL=
-BREVO_SENDER_NAME=
+BREVO_SENDER_EMAIL=noreply@metricauno.com
+BREVO_SENDER_NAME=htmlshare
 
 # Optional Google OAuth
 GOOGLE_CLIENT_ID=

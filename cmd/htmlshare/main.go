@@ -34,7 +34,7 @@ func main() {
 		Mailer: htmlshare.Mailer{
 			DataDir:  dataDir,
 			APIKey:   os.Getenv("RESEND_API_KEY"),
-			From:     env("EMAIL_FROM", "htmlshare@example.com"),
+			From:     env("EMAIL_FROM", "htmlshare <noreply@metricauno.com>"),
 			SMTPAddr: os.Getenv("SMTP_ADDR"),
 			Brevo: htmlshare.BrevoConfig{
 				APIKey: os.Getenv("BREVO_API_KEY"),

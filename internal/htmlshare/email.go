@@ -144,7 +144,7 @@ func (m Mailer) sendMailgun(to, subject, text, html string) error {
 func (m Mailer) sendSMTP(to, subject, text, html string) error {
 	from := m.From
 	if from == "" {
-		from = "htmlshare@example.com"
+		from = "htmlshare <noreply@metricauno.com>"
 	}
 	envelopeFrom := from
 	if parsed, err := mail.ParseAddress(from); err == nil {

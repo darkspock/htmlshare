@@ -1030,15 +1030,15 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var shares []map[string]string
+	shareCount := 0
 	for _, target := range req.Share.Emails {
-		link, err := s.sharePublication(publication, target, req.Share.Message)
+		_, err := s.sharePublication(publication, target, req.Share.Message)
 		if err == nil {
-			shares = append(shares, map[string]string{"email": strings.TrimSpace(strings.ToLower(target)), "url": link})
+			shareCount++
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id": publication.ID, "slug": publication.Slug, "url": s.AppURL + "/f/" + publication.Slug + "/", "shares": shares,
+		"id": publication.ID, "slug": publication.Slug, "url": s.AppURL + "/f/" + publication.Slug + "/", "share_count": shareCount,
 	})
 }
 
@@ -1167,21 +1167,21 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var shares []map[string]string
+	shareCount := 0
 	for _, target := range shareTargets {
-		link, err := s.sharePublication(publication, target, req.Share.Message)
+		_, err := s.sharePublication(publication, target, req.Share.Message)
 		if err == nil {
-			shares = append(shares, map[string]string{"email": target, "url": link})
+			shareCount++
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         publication.ID,
-		"slug":       publication.Slug,
-		"url":        s.AppURL + "/f/" + publication.Slug + "/",
-		"mode":       publication.Mode,
-		"visibility": publication.Visibility,
-		"shares":     shares,
-		"expires_at": publication.ExpiresAt,
+		"id":          publication.ID,
+		"slug":        publication.Slug,
+		"url":         s.AppURL + "/f/" + publication.Slug + "/",
+		"mode":        publication.Mode,
+		"visibility":  publication.Visibility,
+		"share_count": shareCount,
+		"expires_at":  publication.ExpiresAt,
 	})
 }
 
@@ -1240,19 +1240,19 @@ func (s *Server) libraryActions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createShares(w http.ResponseWriter, publication Publication, emails []string, message string) {
-	var shares []map[string]string
+	shareCount := 0
 	targets, err := normalizeShareTargets(emails)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	for _, target := range targets {
-		link, err := s.sharePublication(publication, target, message)
+		_, err := s.sharePublication(publication, target, message)
 		if err == nil {
-			shares = append(shares, map[string]string{"email": target, "url": link})
+			shareCount++
 		}
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"shares": shares})
+	writeJSON(w, http.StatusCreated, map[string]any{"share_count": shareCount})
 }
 
 func (s *Server) updatePublication(w http.ResponseWriter, r *http.Request, publication Publication) {
@@ -1823,7 +1823,7 @@ func (s *Server) magic(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if link.Purpose == "share" {
-			_, _ = io.WriteString(w, confirmShareHTML(token, user.Email, publication.Title))
+			_, _ = io.WriteString(w, confirmShareHTML(token, publication.Title))
 			return
 		}
 	}
@@ -2804,7 +2804,7 @@ func confirmMagicHTML(token, email string) string {
 </html>`
 }
 
-func confirmShareHTML(token, email, title string) string {
+func confirmShareHTML(token, title string) string {
 	if title == "" {
 		title = "shared file"
 	}
@@ -2828,7 +2828,7 @@ func confirmShareHTML(token, email, title string) string {
     <a class="brand-page" href="/"><img src="/logo.png" alt=""><b>html<span>share</span></b></a>
     <p class="eyebrow">Email access</p>
     <h1>Open this shared file.</h1>
-    <p>This confirms <strong>` + htmlEscape(email) + `</strong> and opens <strong>` + htmlEscape(title) + `</strong>. The token is only consumed when you press the button.</p>
+    <p>This confirms email access and opens <strong>` + htmlEscape(title) + `</strong>. The token is only consumed when you press the button.</p>
     <form method="post" action="/auth/magic?token=` + url.QueryEscape(token) + `">
       <button type="submit">Open file</button>
     </form>
