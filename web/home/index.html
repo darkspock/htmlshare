@@ -347,6 +347,33 @@
         color: var(--text);
       }
 
+      .agent-help {
+        width: fit-content;
+        min-height: 42px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        padding: 0 18px;
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font-weight: 800;
+      }
+
+      .agent-help:hover {
+        border-color: rgba(255, 255, 255, 0.28);
+      }
+
+      .help-hint {
+        margin: -4px 0 0;
+        color: var(--dim);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
       .links {
         margin-top: 34px;
         display: flex;
@@ -452,6 +479,8 @@
                 <p>htmlshare is built for Claude, Cowork and other assistants that generate HTML. Agents can POST a bundle directly, or use the MCP endpoint after you provision a key.</p>
               </div>
               <a class="agent-key" href="/llms.txt">AI Instructions here</a>
+              <button class="agent-help" id="copy-llms" type="button">Help: copy LLM link</button>
+              <p class="help-hint" id="help-hint">Paste https://share.metricauno.com/llms.txt in your LLM and ask how to use htmlshare.</p>
             </section>
 
             <section class="auth-login" aria-label="Console access">
@@ -513,6 +542,12 @@
         });
         var text = await response.text();
         notice.textContent = response.ok ? "Email link sent." : text;
+      });
+
+      document.getElementById("copy-llms").addEventListener("click", async function () {
+        var url = window.location.origin + "/llms.txt";
+        await navigator.clipboard.writeText(url);
+        document.getElementById("help-hint").textContent = "Copied. Paste " + url + " in your LLM and ask your question.";
       });
 
     </script>

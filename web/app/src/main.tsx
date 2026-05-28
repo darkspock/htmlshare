@@ -6,6 +6,7 @@ import {
   BarChart3,
   BookMarked,
   Check,
+  CircleHelp,
   Clock,
   Copy,
   Eye,
@@ -92,6 +93,7 @@ type PublishDraft = {
   files: UploadedFile[];
 };
 type NavKey = "Library" | "History" | "Shared with me" | "Bookmarks" | "Recipients" | "Agent keys" | "Activity" | "Settings";
+const llmsHelpUrl = `${window.location.origin}/llms.txt`;
 
 const visibilityHelp: Record<string, string> = {
   private: "Private: only you can open it from the console.",
@@ -369,6 +371,11 @@ function App() {
     await refreshPublications();
   }
 
+  async function copyHelpLink() {
+    await navigator.clipboard.writeText(llmsHelpUrl);
+    setNotice(`Help link copied. Paste ${llmsHelpUrl} into your LLM and ask how to use htmlshare.`);
+  }
+
   if (!session.user) {
     return (
       <Onboarding
@@ -386,7 +393,7 @@ function App() {
     <div className="app-shell">
       <Sidebar active={active} setActive={setActive} user={session.user} queued={publications.length} />
       <div className="main-column">
-        <TopBar active={active} user={session.user} />
+        <TopBar active={active} user={session.user} onHelp={copyHelpLink} />
         <main className="workspace">
           {notice && (
             <div className="notice">
@@ -546,6 +553,10 @@ function Onboarding({
               <p><a href="/llms.txt">AI Instructions here</a></p>
             </div>
           </div>
+          <a className="help-link" href="/llms.txt">
+            <CircleHelp size={15} />
+            Help: paste this link in your LLM and ask
+          </a>
           {notice && <pre className="notice-text">{notice}</pre>}
         </div>
       </section>
@@ -1113,7 +1124,7 @@ function Sidebar({ active, setActive, user, queued }: { active: NavKey; setActiv
   );
 }
 
-function TopBar({ active, user }: { active: NavKey; user: User }) {
+function TopBar({ active, user, onHelp }: { active: NavKey; user: User; onHelp: () => void }) {
   return (
     <header className="topbar">
       <div>
@@ -1122,6 +1133,10 @@ function TopBar({ active, user }: { active: NavKey; user: User }) {
         <b>{active}</b>
       </div>
       <div>
+        <button className="help-button" onClick={onHelp} title={`Copy ${llmsHelpUrl}`}>
+          <CircleHelp size={14} />
+          Help
+        </button>
         <Pill tone="default">
           <Sparkles size={12} />
           Agent v0.4

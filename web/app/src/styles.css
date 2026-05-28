@@ -357,6 +357,37 @@ a {
   font-size: 13px;
 }
 
+.help-link,
+.help-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--off-white);
+  text-decoration: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.help-link {
+  width: fit-content;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.help-button {
+  padding: 0 14px;
+}
+
+.help-link:hover,
+.help-button:hover {
+  border-color: var(--hairline-strong);
+}
+
 .notice-text,
 .agent-card pre,
 .code-card pre {
