@@ -466,6 +466,71 @@ func assertUserConfirmed(t *testing.T, store *Store, email string, want bool) {
 	}
 }
 
+func TestCacheHeaders(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+		Mailer:        Mailer{DataDir: store.DataDir(), From: "test@example.com"},
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	apiResp, err := http.Get(ts.URL + "/api/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = apiResp.Body.Close()
+	if got := apiResp.Header.Get("cache-control"); got != "no-store" {
+		t.Fatalf("api cache-control = %q", got)
+	}
+
+	publishResp := postJSON(t, ts.URL+"/api/v1/publish", "", map[string]any{
+		"mode":        "fast",
+		"agent_id":    "cache-test-agent",
+		"title":       "Cache test",
+		"ttl_seconds": 3600,
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>Cache test</h1></body></html>",
+		},
+	})
+	if publishResp.StatusCode != http.StatusCreated {
+		t.Fatalf("publish status = %d", publishResp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, publishResp, &body)
+	publicURL := body["url"].(string)
+
+	viewResp, err := http.Get(publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = viewResp.Body.Close()
+	if got := viewResp.Header.Get("cache-control"); got != "private, no-cache, max-age=0, must-revalidate" {
+		t.Fatalf("publication cache-control = %q", got)
+	}
+	etag := viewResp.Header.Get("etag")
+	if etag == "" {
+		t.Fatal("publication etag is empty")
+	}
+
+	req := mustRequest(t, http.MethodGet, publicURL, nil)
+	req.Header.Set("if-none-match", etag)
+	revalidateResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = revalidateResp.Body.Close()
+	if revalidateResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("revalidate status = %d, want %d", revalidateResp.StatusCode, http.StatusNotModified)
+	}
+}
+
 func latestOutboxLink(t *testing.T, store *Store) string {
 	t.Helper()
 	raw, err := os.ReadFile(store.DataDir() + "/outbox.jsonl")

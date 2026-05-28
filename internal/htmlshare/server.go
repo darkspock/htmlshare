@@ -170,23 +170,28 @@ func (s *Server) cleanupExpiredAutomaticRegistrations(now time.Time) error {
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/logo.png" {
+		setPublicCache(w, 24*time.Hour)
 		http.ServeFile(w, r, "web/home/logo.png")
 		return
 	}
 	if r.URL.Path == "/logo-white.png" {
+		setPublicCache(w, 24*time.Hour)
 		http.ServeFile(w, r, "web/home/logo-white.png")
 		return
 	}
 	if r.URL.Path == "/favicon.png" || r.URL.Path == "/favicon.ico" {
+		setPublicCache(w, 7*24*time.Hour)
 		w.Header().Set("Content-Type", "image/png")
 		http.ServeFile(w, r, "web/home/favicon.png")
 		return
 	}
 	if r.URL.Path == "/llms.txt" {
+		setPublicCache(w, 5*time.Minute)
 		http.ServeFile(w, r, "web/home/llms.txt")
 		return
 	}
 	if r.URL.Path == "/terms" || r.URL.Path == "/terms/" {
+		setPublicCache(w, 5*time.Minute)
 		http.ServeFile(w, r, "web/home/terms.html")
 		return
 	}
@@ -194,6 +199,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	setPublicCache(w, 5*time.Minute)
 	http.ServeFile(w, r, "web/home/index.html")
 }
 
@@ -348,9 +354,15 @@ func (s *Server) app(w http.ResponseWriter, r *http.Request) {
 	}
 	target := filepath.Join(dist, filepath.Clean(path))
 	if _, err := os.Stat(target); err == nil {
+		if strings.HasPrefix(path, "assets/") {
+			setImmutableCache(w)
+		} else {
+			setNoCache(w)
+		}
 		http.ServeFile(w, r, target)
 		return
 	}
+	setNoCache(w)
 	http.ServeFile(w, r, filepath.Join(dist, "index.html"))
 }
 
@@ -1712,9 +1724,20 @@ func (s *Server) publicationAsset(w http.ResponseWriter, r *http.Request) {
 	if file == "index.html" && strings.Contains(ctype, "text/html") {
 		raw = injectCommentWidget(raw, publication.Slug)
 	}
+	setPrivateRevalidateCache(w)
 	w.Header().Set("content-type", ctype)
+	etag := weakETag(raw)
+	w.Header().Set("etag", etag)
+	if !publication.CreatedAt.IsZero() {
+		w.Header().Set("last-modified", publication.CreatedAt.UTC().Format(http.TimeFormat))
+	}
 	if r.URL.Query().Get("download") == "1" {
 		w.Header().Set("content-disposition", `attachment; filename="`+downloadFilename(publication.Slug, file)+`"`)
+	}
+	if r.URL.Query().Get("download") != "1" && etagMatches(r.Header.Get("if-none-match"), etag) {
+		s.logPublicationAccess(r, publication, file, user, true, http.StatusNotModified)
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	s.logPublicationAccess(r, publication, file, user, true, http.StatusOK)
 	_, _ = io.Copy(w, bytes.NewReader(raw))
@@ -2350,6 +2373,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	setNoStore(w)
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
@@ -2569,6 +2593,43 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("referrer-policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func setNoStore(w http.ResponseWriter) {
+	w.Header().Set("cache-control", "no-store")
+}
+
+func setNoCache(w http.ResponseWriter) {
+	w.Header().Set("cache-control", "no-cache, max-age=0, must-revalidate")
+}
+
+func setPrivateRevalidateCache(w http.ResponseWriter) {
+	w.Header().Set("cache-control", "private, no-cache, max-age=0, must-revalidate")
+	w.Header().Set("vary", "Cookie, Authorization")
+}
+
+func setPublicCache(w http.ResponseWriter, maxAge time.Duration) {
+	seconds := int(maxAge.Seconds())
+	w.Header().Set("cache-control", fmt.Sprintf("public, max-age=%d, stale-while-revalidate=%d", seconds, seconds))
+}
+
+func setImmutableCache(w http.ResponseWriter) {
+	w.Header().Set("cache-control", "public, max-age=31536000, immutable")
+}
+
+func weakETag(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf(`W/"%x"`, sum[:])
+}
+
+func etagMatches(header, etag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == etag || strings.TrimPrefix(candidate, "W/") == strings.TrimPrefix(etag, "W/") {
+			return true
+		}
+	}
+	return false
 }
 
 func htmlEscape(s string) string {
