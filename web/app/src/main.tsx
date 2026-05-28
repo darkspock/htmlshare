@@ -56,7 +56,16 @@ type AccessLog = {
   status: number;
   created_at: string;
 };
-type Stats = { visits: number; logs: AccessLog[] };
+type SignedAccessProof = {
+  id: string;
+  publication_id: string;
+  email: string;
+  ip: string;
+  user_agent: string;
+  token_id: string;
+  created_at: string;
+};
+type Stats = { visits: number; logs: AccessLog[]; signed_proofs?: SignedAccessProof[] };
 type Share = { id: string; publication_id: string; email: string; user_id?: string; created_at: string };
 type HistoryEntry = { publication: Publication; last_opened_at: string; path: string; visits: number };
 type BookmarkRecord = { id: string; user_id: string; publication_id: string; kind: string; created_at: string };
@@ -134,8 +143,6 @@ function App() {
   const [replyTo, setReplyTo] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [abuseCases, setAbuseCases] = useState<AbuseCase[]>([]);
-  const [abuseReason, setAbuseReason] = useState("phishing");
-  const [abuseDetails, setAbuseDetails] = useState("");
   const [draft, setDraft] = useState<PublishDraft>({
     title: "",
     visibility: "public",
@@ -356,25 +363,15 @@ function App() {
     await refreshPublications();
   }
 
-  async function publicationSelectedAbuse() {
-    if (!selected || !abuseReason.trim()) return;
-    const data = await api<{ decision: { severity: string; block: boolean; summary: string } }>("/api/abuse-reports", {
-      method: "POST",
-      body: JSON.stringify({
-        publication_id: selected.id,
-        reason: abuseReason,
-        details: abuseDetails,
-        reporter_email: session.user?.email || ""
-      })
-    });
-    setNotice(`Abuse case reviewed: ${data.decision.severity}${data.decision.block ? " · blocked" : ""}.`);
-    setAbuseDetails("");
-    await refreshPublications();
-  }
-
   async function copyHelpLink() {
     await navigator.clipboard.writeText(llmsHelpUrl);
     setNotice(`Help link copied. Paste ${llmsHelpUrl} into your LLM and ask how to use htmlshare.`);
+  }
+
+  async function copyApiKey() {
+    if (!apiKey) return;
+    await navigator.clipboard.writeText(apiKey);
+    setNotice("Agent key copied.");
   }
 
   async function logout() {
@@ -432,11 +429,6 @@ function App() {
                 sendSignedAccess={sendSignedAccess}
                 shares={sharesByPublication[selected.id] || []}
                 updateSelectedAccess={updateSelectedAccess}
-                abuseReason={abuseReason}
-                setAbuseReason={setAbuseReason}
-                abuseDetails={abuseDetails}
-                setAbuseDetails={setAbuseDetails}
-                publicationSelectedAbuse={publicationSelectedAbuse}
               />
             ) : (
               <EmptyLibrary draft={draft} setDraft={setDraft} publishPublication={publishPublication} />
@@ -447,7 +439,7 @@ function App() {
           {active === "Shared with me" && <SharedWithMeView publications={sharedWithMe} />}
           {active === "Bookmarks" && <BookmarksView bookmarks={bookmarks} reload={loadBookmarks} />}
           {active === "Recipients" && <RecipientsView publications={publications} statsByPublication={statsByPublication} sharesByPublication={sharesByPublication} />}
-          {active === "Agent keys" && <AgentKeysView apiKey={apiKey} createKey={createKey} />}
+          {active === "Agent keys" && <AgentKeysView apiKey={apiKey} createKey={createKey} copyApiKey={copyApiKey} />}
           {active === "Activity" && <ActivityView statsByPublication={statsByPublication} abuseCases={abuseCases} />}
           {active === "Settings" && <SettingsView user={session.user} sendMagicLink={sendMagicLink} />}
         </main>
@@ -591,11 +583,6 @@ function LibraryView(props: {
   sendSignedAccess: () => void;
   shares: Share[];
   updateSelectedAccess: (visibility: string) => void;
-  abuseReason: string;
-  setAbuseReason: (value: string) => void;
-  abuseDetails: string;
-  setAbuseDetails: (value: string) => void;
-  publicationSelectedAbuse: () => void;
 }) {
   const {
     publications,
@@ -613,12 +600,7 @@ function LibraryView(props: {
     setSignedAccessEmail,
     sendSignedAccess,
     shares,
-    updateSelectedAccess,
-    abuseReason,
-    setAbuseReason,
-    abuseDetails,
-    setAbuseDetails,
-    publicationSelectedAbuse
+    updateSelectedAccess
   } = props;
   const selectedStats = statsByPublication[selected.id] || { visits: 0, logs: [] };
   return (
@@ -717,25 +699,6 @@ function LibraryView(props: {
             <span key={share.id}>{share.email}</span>
           ))}
           {!shares.length && <small>No recipients shared yet.</small>}
-        </div>
-        <div className="abuse-box">
-          <div>
-            <ShieldAlert size={16} />
-            <b>Abuse review</b>
-          </div>
-          <select value={abuseReason} onChange={(event) => setAbuseReason(event.target.value)}>
-            <option value="phishing">Phishing / credential theft</option>
-            <option value="malware">Malware</option>
-            <option value="spam">Spam</option>
-            <option value="harassment">Harassment</option>
-            <option value="illegal">Illegal content</option>
-            <option value="other">Other</option>
-          </select>
-          <textarea value={abuseDetails} onChange={(event) => setAbuseDetails(event.target.value)} placeholder="Evidence or context for the LLM review" />
-          <button className="button secondary" onClick={publicationSelectedAbuse}>
-            <ShieldAlert size={14} />
-            Submit abuse case
-          </button>
         </div>
         <PublishComposer draft={draft} setDraft={setDraft} publishPublication={publishPublication} />
       </aside>
@@ -1016,7 +979,15 @@ function BookmarksView({ bookmarks, reload }: { bookmarks: BookmarkEntry[]; relo
   );
 }
 
-function AgentKeysView({ apiKey, createKey }: { apiKey: string; createKey: () => void }) {
+function AgentKeysView({
+  apiKey,
+  createKey,
+  copyApiKey
+}: {
+  apiKey: string;
+  createKey: () => void;
+  copyApiKey: () => void;
+}) {
   return (
     <section className="page-section">
       <PageTitle eyebrow="Agent keys" title="Provision keys for Claude, Cowork and MCP." muted="Keys authorize one-call publishing." />
@@ -1029,7 +1000,15 @@ function AgentKeysView({ apiKey, createKey }: { apiKey: string; createKey: () =>
             <Plus size={15} />
             Create key
           </button>
-          {apiKey && <pre>{apiKey}</pre>}
+          {apiKey && (
+            <div className="api-key-result">
+              <pre>{apiKey}</pre>
+              <button type="button" onClick={copyApiKey} aria-label="Copy agent key">
+                <Copy size={15} />
+                Copy
+              </button>
+            </div>
+          )}
         </div>
         <div className="code-card">
           <p className="eyebrow">Registered protocol</p>
@@ -1056,9 +1035,24 @@ function ActivityView({ statsByPublication, abuseCases }: { statsByPublication: 
   const logs = Object.values(statsByPublication)
     .flatMap((stat) => stat.logs || [])
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const signedProofs = Object.values(statsByPublication)
+    .flatMap((stat) => stat.signed_proofs || [])
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   return (
     <section className="page-section">
       <PageTitle eyebrow="Activity" title="Access log." muted="IP, email, path and status are recorded when available." />
+      <div className="activity-list">
+        {signedProofs.length ? signedProofs.map((proof) => (
+          <div key={proof.id}>
+            <Check size={15} />
+            <span>{proof.email}</span>
+            <code>{proof.ip}</code>
+            <b>Signed access proof</b>
+            <Pill tone="success">signed</Pill>
+            <time>{formatDate(proof.created_at)}</time>
+          </div>
+        )) : <div className="blank-card">No signed access proofs yet.</div>}
+      </div>
       <div className="abuse-list">
         {abuseCases.length ? abuseCases.map((publication) => (
           <div key={publication.id}>

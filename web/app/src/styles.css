@@ -1151,13 +1151,45 @@ kbd {
   margin-top: 14px;
 }
 
-.agent-card pre {
+.api-key-result {
   margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.api-key-result pre {
+  min-width: 0;
+}
+
+.api-key-result button {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: #181a18;
+  color: var(--off-white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.api-key-result button:hover {
+  border-color: var(--hairline-strong);
 }
 
 .code-card pre {
   margin-top: 16px;
   min-height: 220px;
+}
+
+.agent-note a,
+.code-card a {
+  color: var(--off-white);
+  text-decoration-color: var(--off-white);
 }
 
 .person-card {

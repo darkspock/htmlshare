@@ -1312,10 +1312,16 @@ func (s *Server) updatePublication(w http.ResponseWriter, r *http.Request, publi
 
 func (s *Server) publicationStats(w http.ResponseWriter, publication Publication) {
 	var logs []AccessLog
+	var signedProofs []SignedAccessProof
 	_ = s.Store.ReadDB(func(db DB) error {
 		for _, log := range db.AccessLogs {
 			if log.PublicationID == publication.ID {
 				logs = append(logs, log)
+			}
+		}
+		for _, proof := range db.SignedProofs {
+			if proof.PublicationID == publication.ID {
+				signedProofs = append(signedProofs, proof)
 			}
 		}
 		return nil
@@ -1325,6 +1331,7 @@ func (s *Server) publicationStats(w http.ResponseWriter, publication Publication
 		"slug":           publication.Slug,
 		"visits":         len(logs),
 		"logs":           logs,
+		"signed_proofs":  signedProofs,
 	})
 }
 
