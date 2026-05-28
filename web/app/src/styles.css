@@ -60,6 +60,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.app-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: var(--off-white);
+  background: var(--charcoal);
+  font-size: 22px;
+  font-weight: 700;
+}
+
 button,
 input,
 textarea,

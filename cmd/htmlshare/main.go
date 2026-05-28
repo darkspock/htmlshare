@@ -8,12 +8,29 @@ import (
 	"time"
 
 	"htmlshare/internal/htmlshare"
+
+	"github.com/getsentry/sentry-go"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 )
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		healthcheck()
 		return
+	}
+	if os.Getenv("SENTRY_DSN") != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              os.Getenv("SENTRY_DSN"),
+			Environment:      env("SENTRY_ENVIRONMENT", "production"),
+			Release:          os.Getenv("SENTRY_RELEASE"),
+			SendDefaultPII:   false,
+			AttachStacktrace: true,
+			TracesSampleRate: 0,
+			BeforeSend:       scrubSentryEvent,
+		}); err != nil {
+			log.Printf("sentry init failed: %v", err)
+		}
+		defer sentry.Flush(2 * time.Second)
 	}
 
 	port := env("PORT", "4545")
@@ -49,7 +66,22 @@ func main() {
 		},
 	}
 	log.Printf("htmlshare listening on %s", appURL)
-	log.Fatal(http.ListenAndServe(":"+port, server.Routes()))
+	handler := server.Routes()
+	if os.Getenv("SENTRY_DSN") != "" {
+		handler = sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle(handler)
+	}
+	log.Fatal(http.ListenAndServe(":"+port, handler))
+}
+
+func scrubSentryEvent(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+	if event.Request != nil {
+		event.Request.QueryString = ""
+		event.Request.Cookies = ""
+		for _, header := range []string{"Authorization", "Cookie", "Set-Cookie", "X-Api-Key"} {
+			delete(event.Request.Headers, header)
+		}
+	}
+	return event
 }
 
 func healthcheck() {

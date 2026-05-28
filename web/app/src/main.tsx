@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import * as Sentry from "@sentry/react";
 import {
   Activity,
   ArrowRight,
@@ -31,6 +32,21 @@ import {
 } from "lucide-react";
 import logoMark from "./assets/brand/logo.png";
 import "./styles.css";
+
+const sentryDsn =
+  import.meta.env.VITE_SENTRY_DSN ||
+  (window.location.hostname === "share.metricauno.com"
+    ? "https://bffb41a3d71fd2ae6a371005869f45c3@sentry.metrica.uno/2"
+    : "");
+
+if (sentryDsn) {
+  Sentry.init({
+    dsn: sentryDsn,
+    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || "production",
+    release: import.meta.env.VITE_SENTRY_RELEASE,
+    sendDefaultPii: false
+  });
+}
 
 type Session = { user: null | User };
 type User = { id: string; email: string; name: string; provider: string; email_confirmed?: string };
@@ -1336,4 +1352,8 @@ function initials(value: string) {
     .toUpperCase();
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <Sentry.ErrorBoundary fallback={<div className="app-error">Something went wrong.</div>}>
+    <App />
+  </Sentry.ErrorBoundary>
+);

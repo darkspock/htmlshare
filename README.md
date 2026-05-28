@@ -126,6 +126,14 @@ BREVO_SENDER_NAME=htmlshare
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URL=http://localhost:4545/auth/google/callback
+
+# Optional Sentry error reporting.
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+SENTRY_RELEASE=
+VITE_SENTRY_DSN=
+VITE_SENTRY_ENVIRONMENT=production
+VITE_SENTRY_RELEASE=
 ```
 
 ## Fast AI Publish
