@@ -14,7 +14,7 @@ import (
 )
 
 const clearAll = `-- name: ClearAll :exec
-TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users
+TRUNCATE bookmarks, signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users
 `
 
 func (q *Queries) ClearAll(ctx context.Context) error {
@@ -54,6 +54,21 @@ func (q *Queries) CountFastPublicationsByIPSince(ctx context.Context, arg CountF
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteBookmark = `-- name: DeleteBookmark :exec
+DELETE FROM bookmarks WHERE user_id = $1 AND publication_id = $2 AND kind = $3
+`
+
+type DeleteBookmarkParams struct {
+	UserID        string
+	PublicationID string
+	Kind          string
+}
+
+func (q *Queries) DeleteBookmark(ctx context.Context, arg DeleteBookmarkParams) error {
+	_, err := q.db.ExecContext(ctx, deleteBookmark, arg.UserID, arg.PublicationID, arg.Kind)
+	return err
 }
 
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
@@ -745,6 +760,39 @@ func (q *Queries) ListBans(ctx context.Context) ([]Ban, error) {
 	return items, nil
 }
 
+const listBookmarks = `-- name: ListBookmarks :many
+SELECT id, user_id, publication_id, kind, created_at FROM bookmarks ORDER BY created_at, id
+`
+
+func (q *Queries) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
+	rows, err := q.db.QueryContext(ctx, listBookmarks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Bookmark
+	for rows.Next() {
+		var i Bookmark
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.PublicationID,
+			&i.Kind,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComments = `-- name: ListComments :many
 SELECT id, publication_id, parent_id, user_id, email, ip, body, scope, anchor_text, anchor_selector, created_at, archived_at, deleted_at FROM comments ORDER BY created_at, id
 `
@@ -1175,4 +1223,29 @@ func (q *Queries) UpsertAgent(ctx context.Context, arg UpsertAgentParams) (Agent
 		&i.LastSeenAt,
 	)
 	return i, err
+}
+
+const upsertBookmark = `-- name: UpsertBookmark :exec
+INSERT INTO bookmarks (id, user_id, publication_id, kind, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, publication_id, kind) DO NOTHING
+`
+
+type UpsertBookmarkParams struct {
+	ID            string
+	UserID        string
+	PublicationID string
+	Kind          string
+	CreatedAt     time.Time
+}
+
+func (q *Queries) UpsertBookmark(ctx context.Context, arg UpsertBookmarkParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBookmark,
+		arg.ID,
+		arg.UserID,
+		arg.PublicationID,
+		arg.Kind,
+		arg.CreatedAt,
+	)
+	return err
 }

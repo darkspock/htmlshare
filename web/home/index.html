@@ -145,7 +145,7 @@
         display: inline-block;
         margin: 0 0.045em;
         padding: 0.06em 0.08em 0.1em;
-        background: #3f5f82;
+        background: #6f7472;
         color: var(--text);
         line-height: 0.82;
       }
@@ -218,6 +218,16 @@
         font-size: 38px;
         line-height: 1.05;
         letter-spacing: -0.04em;
+      }
+
+      .agent-primary h2 .agent-highlight {
+        margin: 0 0.02em;
+        padding: 0.02em 0.06em 0.08em;
+        color: var(--text);
+      }
+
+      .agent-primary h2 .people-muted {
+        color: var(--muted);
       }
 
       .auth > p,
@@ -327,10 +337,14 @@
 
       .agent-key {
         display: inline;
-        color: var(--accent);
+        color: var(--text);
         font-size: 16px;
         text-decoration: underline;
         text-underline-offset: 5px;
+      }
+
+      .agent-key:hover {
+        color: var(--text);
       }
 
       .links {
@@ -434,7 +448,7 @@
             <section class="agent-primary" aria-label="AI publishing instructions">
               <div>
                 <p class="eyebrow">AI first · API / MCP</p>
-                <h2>Publish from the agent, then share with people.</h2>
+                <h2>Publish from the <span class="agent-highlight">agent</span>, then share <span class="people-muted">with people.</span></h2>
                 <p>htmlshare is built for Claude, Cowork and other assistants that generate HTML. Agents can POST a bundle directly, or use the MCP endpoint after you provision a key.</p>
               </div>
               <a class="agent-key" href="/llms.txt">AI Instructions here</a>

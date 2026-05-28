@@ -298,6 +298,14 @@ func (s *Store) loadPostgres() error {
 		next.SignedProofs = append(next.SignedProofs, SignedAccessProof{ID: item.ID, PublicationID: item.PublicationID, Email: item.Email, IP: item.Ip, UserAgent: item.UserAgent, TokenID: item.TokenID, CreatedAt: item.CreatedAt})
 	}
 
+	bookmarks, err := q.ListBookmarks(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range bookmarks {
+		next.Bookmarks = append(next.Bookmarks, Bookmark{ID: item.ID, UserID: item.UserID, PublicationID: item.PublicationID, Kind: item.Kind, CreatedAt: item.CreatedAt})
+	}
+
 	s.db = next
 	return nil
 }
@@ -440,6 +448,11 @@ func (s *Store) savePostgres() error {
 	}
 	for _, item := range s.db.SignedProofs {
 		if err := q.InsertSignedAccessProof(ctx, state.InsertSignedAccessProofParams{ID: item.ID, PublicationID: item.PublicationID, Email: item.Email, Ip: item.IP, UserAgent: item.UserAgent, TokenID: item.TokenID, CreatedAt: item.CreatedAt}); err != nil {
+			return err
+		}
+	}
+	for _, item := range s.db.Bookmarks {
+		if err := q.UpsertBookmark(ctx, state.UpsertBookmarkParams{ID: item.ID, UserID: item.UserID, PublicationID: item.PublicationID, Kind: item.Kind, CreatedAt: item.CreatedAt}); err != nil {
 			return err
 		}
 	}

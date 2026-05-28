@@ -4,6 +4,9 @@
   "scripts": {
     "dev": "go run ./cmd/htmlshare",
     "mcp": "go run ./cmd/htmlshare-mcp",
-    "check": "go test ./..."
+    "sqlc": "go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
+    "check:sqlc": "tmp=$(mktemp -d) && cp -R internal/htmlshare/state \"$tmp/state\" && npm run sqlc && diff -qr \"$tmp/state\" internal/htmlshare/state",
+    "check": "npm run check:sqlc && go test ./...",
+    "build": "npm run check:sqlc && npm --prefix web/app run build && go build -trimpath -ldflags=\"-s -w\" -o /tmp/htmlshare ./cmd/htmlshare && go build -trimpath -ldflags=\"-s -w\" -o /tmp/htmlshare-mcp ./cmd/htmlshare-mcp"
   }
 }

@@ -173,3 +173,12 @@ CREATE TABLE IF NOT EXISTS signed_access_proofs (
   token_id text NOT NULL REFERENCES signed_access_tokens(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  publication_id text NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+  kind text NOT NULL DEFAULT 'read_later',
+  created_at timestamptz NOT NULL,
+  UNIQUE (user_id, publication_id, kind)
+);

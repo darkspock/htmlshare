@@ -73,6 +73,14 @@ type Ban struct {
 	ExpiresAt time.Time
 }
 
+type Bookmark struct {
+	ID            string
+	UserID        string
+	PublicationID string
+	Kind          string
+	CreatedAt     time.Time
+}
+
 type Comment struct {
 	ID             string
 	PublicationID  string

@@ -351,6 +351,60 @@ func (s *Store) AddAccessLog(entry AccessLog) error {
 	return s.saveLocked()
 }
 
+func (s *Store) UpsertBookmark(bookmark Bookmark) error {
+	if bookmark.Kind == "" {
+		bookmark.Kind = "read_later"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pg != nil {
+		if err := state.New(s.pg).UpsertBookmark(context.Background(), state.UpsertBookmarkParams{
+			ID:            bookmark.ID,
+			UserID:        bookmark.UserID,
+			PublicationID: bookmark.PublicationID,
+			Kind:          bookmark.Kind,
+			CreatedAt:     bookmark.CreatedAt,
+		}); err != nil {
+			return err
+		}
+	}
+	for _, item := range s.db.Bookmarks {
+		if item.UserID == bookmark.UserID && item.PublicationID == bookmark.PublicationID && item.Kind == bookmark.Kind {
+			return nil
+		}
+	}
+	s.db.Bookmarks = append(s.db.Bookmarks, bookmark)
+	if s.pg != nil {
+		return nil
+	}
+	return s.saveLocked()
+}
+
+func (s *Store) DeleteBookmark(userID, publicationID, kind string) error {
+	if kind == "" {
+		kind = "read_later"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pg != nil {
+		if err := state.New(s.pg).DeleteBookmark(context.Background(), state.DeleteBookmarkParams{UserID: userID, PublicationID: publicationID, Kind: kind}); err != nil {
+			return err
+		}
+	}
+	var bookmarks []Bookmark
+	for _, item := range s.db.Bookmarks {
+		if item.UserID == userID && item.PublicationID == publicationID && item.Kind == kind {
+			continue
+		}
+		bookmarks = append(bookmarks, item)
+	}
+	s.db.Bookmarks = bookmarks
+	if s.pg != nil {
+		return nil
+	}
+	return s.saveLocked()
+}
+
 func userFromState(item state.User) User {
 	return User{
 		ID:                   item.ID,

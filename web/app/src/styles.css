@@ -120,17 +120,6 @@ a {
   font-weight: 400;
 }
 
-.brand small {
-  margin-left: 6px;
-  padding-left: 12px;
-  border-left: 1px solid var(--hairline);
-  color: var(--charcoal-50);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .statement {
   max-width: 720px;
 }
@@ -166,7 +155,7 @@ a {
   display: inline-block;
   margin: 0 0.045em;
   padding: 0.06em 0.08em 0.1em;
-  background: #3f5f82;
+  background: #6f7472;
   color: var(--off-white);
   line-height: 0.82;
 }
@@ -442,30 +431,6 @@ a {
   font-size: 10px;
 }
 
-.agent-online {
-  margin-top: auto;
-  padding: 14px;
-  border: 1px solid var(--hairline);
-  border-radius: 14px;
-  background: var(--charcoal-95);
-}
-
-.agent-online > span {
-  width: 6px;
-  height: 6px;
-  display: inline-block;
-  border-radius: 999px;
-  background: var(--success);
-  box-shadow: 0 0 0 3px rgba(179, 216, 164, 0.18);
-}
-
-.agent-online b,
-.agent-online small {
-  display: block;
-  margin-top: 8px;
-}
-
-.agent-online small,
 .user-card small,
 .panel-header span,
 .page-title span {
@@ -1190,6 +1155,7 @@ kbd {
 }
 
 .soft-table > div,
+.soft-table > a,
 .activity-list > div {
   min-height: 54px;
   display: grid;
@@ -1201,12 +1167,38 @@ kbd {
 }
 
 .soft-table > div:first-child,
+.soft-table > a:first-child,
 .activity-list > div:first-child {
   border-top: 0;
 }
 
+.soft-table > a {
+  color: var(--off-white);
+  text-decoration: none;
+}
+
 .soft-table b {
   color: var(--charcoal-30);
+}
+
+.library-list > a,
+.library-list > div {
+  grid-template-columns: 24px minmax(180px, 1fr) minmax(100px, 180px) auto auto;
+}
+
+.library-list small,
+.library-list time {
+  color: var(--charcoal-50);
+}
+
+.library-list button,
+.library-list div > a {
+  border: 0;
+  background: transparent;
+  color: var(--charcoal-30);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .activity-list > div {
@@ -1272,7 +1264,6 @@ kbd {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .agent-online,
   .user-card {
     display: none;
   }

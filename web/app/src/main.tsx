@@ -4,12 +4,14 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
+  BookMarked,
   Check,
   Clock,
   Copy,
   Eye,
   FileText,
   Globe,
+  History,
   KeyRound,
   Library,
   Lock,
@@ -54,6 +56,9 @@ type AccessLog = {
 };
 type Stats = { visits: number; logs: AccessLog[] };
 type Share = { id: string; publication_id: string; email: string; user_id?: string; created_at: string };
+type HistoryEntry = { publication: Publication; last_opened_at: string; path: string; visits: number };
+type BookmarkRecord = { id: string; user_id: string; publication_id: string; kind: string; created_at: string };
+type BookmarkEntry = { bookmark: BookmarkRecord; publication: Publication };
 type Comment = {
   id: string;
   publication_id: string;
@@ -86,16 +91,20 @@ type PublishDraft = {
   recipients: string;
   files: UploadedFile[];
 };
-type NavKey = "Library" | "Recipients" | "Agent keys" | "Activity" | "Settings";
+type NavKey = "Library" | "History" | "Shared with me" | "Bookmarks" | "Recipients" | "Agent keys" | "Activity" | "Settings";
 
 const visibilityHelp: Record<string, string> = {
   private: "Private: only you can open it from the console.",
   recipients: "Recipients: only specific emails or allowed domains can open it.",
+  signed: "Signed access: each recipient receives an email token and reading proof is recorded.",
   public: "Link access: anyone with the link can open it."
 };
 
 const navItems: Array<{ key: NavKey; icon: React.ElementType }> = [
   { key: "Library", icon: Library },
+  { key: "History", icon: History },
+  { key: "Shared with me", icon: Share2 },
+  { key: "Bookmarks", icon: BookMarked },
   { key: "Recipients", icon: Users },
   { key: "Agent keys", icon: KeyRound },
   { key: "Activity", icon: Activity },
@@ -115,6 +124,9 @@ function App() {
   const [signedAccessEmail, setSignedAccessEmail] = useState("");
   const [statsByPublication, setStatsByPublication] = useState<Record<string, Stats>>({});
   const [sharesByPublication, setSharesByPublication] = useState<Record<string, Share[]>>({});
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [sharedWithMe, setSharedWithMe] = useState<Publication[]>([]);
+  const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
   const [commentsByPublication, setCommentsByPublication] = useState<Record<string, Comment[]>>({});
   const [replyTo, setReplyTo] = useState("");
   const [replyBody, setReplyBody] = useState("");
@@ -122,7 +134,7 @@ function App() {
   const [abuseReason, setAbuseReason] = useState("phishing");
   const [abuseDetails, setAbuseDetails] = useState("");
   const [draft, setDraft] = useState<PublishDraft>({
-    title: "European market scan",
+    title: "",
     visibility: "public",
     recipients: "",
     files: []
@@ -163,6 +175,22 @@ function App() {
     await Promise.all(nextPublications.slice(0, 6).map((publication) => loadStats(publication)));
     await Promise.all(nextPublications.slice(0, 6).map((publication) => loadShares(publication)));
     await loadAbuseCases();
+    await Promise.all([loadHistory(), loadSharedWithMe(), loadBookmarks()]);
+  }
+
+  async function loadHistory() {
+    const data = await api<{ history?: HistoryEntry[] }>("/api/history");
+    setHistory(data.history || []);
+  }
+
+  async function loadSharedWithMe() {
+    const data = await api<{ publications?: Publication[] }>("/api/shared-with-me");
+    setSharedWithMe(data.publications || []);
+  }
+
+  async function loadBookmarks() {
+    const data = await api<{ bookmarks?: BookmarkEntry[] }>("/api/bookmarks");
+    setBookmarks(data.bookmarks || []);
   }
 
   async function loadStats(publication: Publication) {
@@ -216,12 +244,21 @@ function App() {
       setNotice("Select at least one file before publishing.");
       return;
     }
-    const recipients = draft.visibility === "recipients"
+    const recipients = draft.visibility === "recipients" || draft.visibility === "signed"
       ? draft.recipients
         .split(/[;,]/)
         .map((email) => email.trim())
         .filter(Boolean)
       : [];
+    if ((draft.visibility === "recipients" || draft.visibility === "signed") && recipients.length === 0) {
+      setNotice("Add at least one email or domain before publishing with restricted access.");
+      return;
+    }
+    if (draft.visibility === "signed" && recipients.some((target) => target.startsWith("@"))) {
+      setNotice("Signed access requires specific email addresses, not domains.");
+      return;
+    }
+    const title = draft.title.trim() || "Untitled file";
     const uploadedFiles = draft.files.reduce<Record<string, string>>((files, file) => {
       files[file.name] = file.content;
       return files;
@@ -230,16 +267,22 @@ function App() {
       method: "POST",
       body: JSON.stringify({
         mode: "registered",
-        title: draft.title,
+        title,
         visibility: draft.visibility,
-        require_registration: draft.visibility === "recipients",
+        require_registration: draft.visibility === "recipients" || draft.visibility === "signed",
         files: uploadedFiles,
-        share: {
+        share: draft.visibility === "recipients" ? {
           emails: recipients,
-          message: `Here is ${draft.title}.`
-        }
+          message: `Here is ${title}.`
+        } : undefined
       })
     });
+    if (draft.visibility === "signed") {
+      await Promise.all(recipients.map((email) => api(`/api/library/${data.id}/signed-access`, {
+        method: "POST",
+        body: JSON.stringify({ email, message: `Please open this signed access link for ${title}.` })
+      })));
+    }
     setNotice(`File published: ${data.url}`);
     await refreshPublications();
     setSelectedId(data.id);
@@ -304,7 +347,7 @@ function App() {
     if (!selected) return;
     await api(`/api/library/${selected.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ visibility, require_registration: visibility === "recipients" })
+      body: JSON.stringify({ visibility, require_registration: visibility === "recipients" || visibility === "signed" })
     });
     setNotice(`Access updated to ${visibility}.`);
     await refreshPublications();
@@ -383,6 +426,9 @@ function App() {
             )
           )}
 
+          {active === "History" && <HistoryView history={history} />}
+          {active === "Shared with me" && <SharedWithMeView publications={sharedWithMe} />}
+          {active === "Bookmarks" && <BookmarksView bookmarks={bookmarks} reload={loadBookmarks} />}
           {active === "Recipients" && <RecipientsView publications={publications} statsByPublication={statsByPublication} sharesByPublication={sharesByPublication} />}
           {active === "Agent keys" && <AgentKeysView apiKey={apiKey} createKey={createKey} />}
           {active === "Activity" && <ActivityView statsByPublication={statsByPublication} abuseCases={abuseCases} />}
@@ -619,9 +665,9 @@ function LibraryView(props: {
           </div>
         </div>
         <div className="access-modes">
-          {["private", "recipients", "public"].map((mode) => (
+          {["private", "recipients", "signed", "public"].map((mode) => (
             <button key={mode} className={selected.visibility === mode ? "selected" : ""} onClick={() => updateSelectedAccess(mode)}>
-              {mode === "public" ? <Globe size={14} /> : mode === "private" ? <Lock size={14} /> : <Mail size={14} />}
+              {mode === "public" ? <Globe size={14} /> : mode === "private" ? <Lock size={14} /> : mode === "signed" ? <Check size={14} /> : <Mail size={14} />}
               <span>{accessLabel(mode)}</span>
             </button>
           ))}
@@ -835,15 +881,16 @@ function PublishComposer({
           ))}
         </div>
       )}
-      <input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
+      <input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Title for this shared file" />
       <select value={draft.visibility} onChange={(event) => setDraft((current) => ({ ...current, visibility: event.target.value }))}>
         <option value="private">Private</option>
         <option value="recipients">Recipients (emails or domains)</option>
+        <option value="signed">Signed access (email proof)</option>
         <option value="public">Link access</option>
       </select>
       <small className="visibility-help">{visibilityHelp[draft.visibility]}</small>
-      {draft.visibility === "recipients" && (
-        <input value={draft.recipients} onChange={(event) => setDraft((current) => ({ ...current, recipients: event.target.value }))} placeholder="reader@example.com, team@example.com, @example.com" />
+      {(draft.visibility === "recipients" || draft.visibility === "signed") && (
+        <input value={draft.recipients} onChange={(event) => setDraft((current) => ({ ...current, recipients: event.target.value }))} placeholder={draft.visibility === "signed" ? "legal@example.com, reviewer@example.com" : "reader@example.com, team@example.com, @example.com"} />
       )}
       <button className="button primary" onClick={publishPublication}>
         <Send size={15} />
@@ -854,9 +901,9 @@ function PublishComposer({
 }
 
 function RecipientsView({
-  publications,
-  statsByPublication,
-  sharesByPublication
+	publications,
+	statsByPublication,
+	sharesByPublication
 }: {
   publications: Publication[];
   statsByPublication: Record<string, Stats>;
@@ -881,6 +928,68 @@ function RecipientsView({
             <b>{statsByPublication[publication.id]?.visits || 0} accesses</b>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function HistoryView({ history }: { history: HistoryEntry[] }) {
+  return (
+    <section className="page-section">
+      <PageTitle eyebrow="History" title="Pages you opened." muted={`${history.length} recent files`} />
+      <div className="soft-table library-list">
+        {history.length ? history.map((entry) => (
+          <a key={entry.publication.id} href={`/f/${entry.publication.slug}/`} target="_blank">
+            <History size={16} />
+            <span>{entry.publication.title}</span>
+            <small>{entry.path}</small>
+            <b>{entry.visits} visits</b>
+            <time>{formatDate(entry.last_opened_at)}</time>
+          </a>
+        )) : <div className="blank-card">No visited pages yet.</div>}
+      </div>
+    </section>
+  );
+}
+
+function SharedWithMeView({ publications }: { publications: Publication[] }) {
+  return (
+    <section className="page-section">
+      <PageTitle eyebrow="Shared with me" title="Files you can access." muted={`${publications.length} available files`} />
+      <div className="soft-table library-list">
+        {publications.length ? publications.map((publication) => (
+          <a key={publication.id} href={`/f/${publication.slug}/`} target="_blank">
+            <Share2 size={16} />
+            <span>{publication.title}</span>
+            <small>{publication.visibility}</small>
+            <b>{publication.files.length} files</b>
+            <time>{formatDate(publication.created_at)}</time>
+          </a>
+        )) : <div className="blank-card">No files have been shared with this account yet.</div>}
+      </div>
+    </section>
+  );
+}
+
+function BookmarksView({ bookmarks, reload }: { bookmarks: BookmarkEntry[]; reload: () => void }) {
+  async function remove(publication: Publication) {
+    await api(`/api/bookmarks/${publication.id}`, { method: "DELETE" });
+    await reload();
+  }
+
+  return (
+    <section className="page-section">
+      <PageTitle eyebrow="Bookmarks" title="Read later." muted={`${bookmarks.length} saved files`} />
+      <div className="soft-table library-list">
+        {bookmarks.length ? bookmarks.map((entry) => (
+          <div key={entry.bookmark.id}>
+            <BookMarked size={16} />
+            <span>{entry.publication.title}</span>
+            <small>{entry.bookmark.kind.replace("_", " ")}</small>
+            <a href={`/f/${entry.publication.slug}/`} target="_blank">Open</a>
+            <button onClick={() => remove(entry.publication)}>Remove</button>
+          </div>
+        )) : <div className="blank-card">No bookmarks yet. Use Read later from the page toolbar.</div>}
       </div>
     </section>
   );
@@ -993,12 +1102,6 @@ function Sidebar({ active, setActive, user, queued }: { active: NavKey; setActiv
           </button>
         ))}
       </nav>
-      <div className="agent-online">
-        <span />
-        <p className="eyebrow">Agent online</p>
-        <b>claude / cowork</b>
-        <small>{queued} files indexed</small>
-      </div>
       <div className="user-card">
         <div>{initials(user.email)}</div>
         <span>
@@ -1034,7 +1137,6 @@ function Brand() {
     <a className="brand" href="/">
       <img src={logoMark} alt="" />
       <span><b>html</b><em>share</em></span>
-      <small>by Metrica Uno</small>
     </a>
   );
 }
@@ -1131,6 +1233,7 @@ function formatBytes(value: number) {
 function accessLabel(value: string) {
   if (value === "public") return "Link access";
   if (value === "recipients") return "Recipients";
+  if (value === "signed") return "Signed access";
   return "Private";
 }
 

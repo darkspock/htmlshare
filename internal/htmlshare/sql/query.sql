@@ -1,5 +1,5 @@
 -- name: ClearAll :exec
-TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users;
+TRUNCATE bookmarks, signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users;
 
 -- name: ListUsers :many
 SELECT * FROM users ORDER BY created_at, id;
@@ -137,3 +137,14 @@ SELECT * FROM signed_access_proofs ORDER BY created_at, id;
 -- name: InsertSignedAccessProof :exec
 INSERT INTO signed_access_proofs (id, publication_id, email, ip, user_agent, token_id, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: ListBookmarks :many
+SELECT * FROM bookmarks ORDER BY created_at, id;
+
+-- name: UpsertBookmark :exec
+INSERT INTO bookmarks (id, user_id, publication_id, kind, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, publication_id, kind) DO NOTHING;
+
+-- name: DeleteBookmark :exec
+DELETE FROM bookmarks WHERE user_id = $1 AND publication_id = $2 AND kind = $3;

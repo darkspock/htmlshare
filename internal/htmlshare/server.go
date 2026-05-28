@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +64,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/library", s.library)
 	mux.HandleFunc("/api/library/", s.libraryActions)
 	mux.HandleFunc("/api/v1/library/", s.libraryActions)
+	mux.HandleFunc("/api/history", s.history)
+	mux.HandleFunc("/api/v1/history", s.history)
+	mux.HandleFunc("/api/shared-with-me", s.sharedWithMe)
+	mux.HandleFunc("/api/v1/shared-with-me", s.sharedWithMe)
+	mux.HandleFunc("/api/bookmarks", s.bookmarks)
+	mux.HandleFunc("/api/v1/bookmarks", s.bookmarks)
+	mux.HandleFunc("/api/bookmarks/", s.bookmarkActions)
+	mux.HandleFunc("/api/v1/bookmarks/", s.bookmarkActions)
 	mux.HandleFunc("/api/public-comments/", s.publicPublicationComments)
 	mux.HandleFunc("/api/v1/public-comments/", s.publicPublicationComments)
 	mux.HandleFunc("/api/comments/", s.commentActions)
@@ -86,7 +95,7 @@ func (s *Server) Routes() http.Handler {
 
 func (s *Server) banMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/" || r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" || r.URL.Path == "/logo.png" || r.URL.Path == "/llms.txt" || r.URL.Path == "/terms" || strings.HasPrefix(r.URL.Path, "/app/") || r.URL.Path == "/api/abuse-reports" || r.URL.Path == "/abuse" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/" || r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" || r.URL.Path == "/logo.png" || r.URL.Path == "/logo-white.png" || r.URL.Path == "/llms.txt" || r.URL.Path == "/terms" || strings.HasPrefix(r.URL.Path, "/app/") || r.URL.Path == "/api/abuse-reports" || r.URL.Path == "/abuse" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -164,6 +173,10 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "web/home/logo.png")
 		return
 	}
+	if r.URL.Path == "/logo-white.png" {
+		http.ServeFile(w, r, "web/home/logo-white.png")
+		return
+	}
 	if r.URL.Path == "/favicon.png" || r.URL.Path == "/favicon.ico" {
 		w.Header().Set("Content-Type", "image/png")
 		http.ServeFile(w, r, "web/home/favicon.png")
@@ -233,7 +246,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 						"agent_id":             map[string]string{"type": "string"},
 						"agent_name":           map[string]string{"type": "string"},
 						"title":                map[string]string{"type": "string"},
-						"visibility":           map[string]any{"type": "string", "enum": []string{"private", "magic", "recipients", "public"}},
+						"visibility":           map[string]any{"type": "string", "enum": []string{"private", "magic", "recipients", "signed", "public"}},
 						"require_registration": map[string]string{"type": "boolean"},
 						"expires_at":           map[string]string{"type": "string", "format": "date-time"},
 						"ttl_seconds":          map[string]string{"type": "integer"},
@@ -711,7 +724,7 @@ func mcpTools() []map[string]any {
 				"required": []string{"title", "files"},
 				"properties": map[string]any{
 					"title":                map[string]string{"type": "string"},
-					"visibility":           map[string]any{"type": "string", "enum": []string{"private", "magic", "recipients", "public"}},
+					"visibility":           map[string]any{"type": "string", "enum": []string{"private", "magic", "recipients", "signed", "public"}},
 					"require_registration": map[string]string{"type": "boolean"},
 					"expires_at":           map[string]string{"type": "string", "format": "date-time"},
 					"ttl_seconds":          map[string]string{"type": "integer"},
@@ -769,6 +782,165 @@ func (s *Server) listPublications(w http.ResponseWriter, user *User) {
 		return nil
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"publications": publications})
+}
+
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	user := s.requireAutomationUser(w, r)
+	if user == nil {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	type item struct {
+		Publication Publication `json:"publication"`
+		LastOpened  time.Time   `json:"last_opened_at"`
+		Path        string      `json:"path"`
+		Visits      int         `json:"visits"`
+	}
+	byID := map[string]*item{}
+	_ = s.Store.ReadDB(func(db DB) error {
+		publications := map[string]Publication{}
+		for _, publication := range db.Publications {
+			publications[publication.ID] = publication
+		}
+		for _, log := range db.AccessLogs {
+			if log.UserID != user.ID || !log.Allowed {
+				continue
+			}
+			publication, ok := publications[log.PublicationID]
+			if !ok {
+				continue
+			}
+			current := byID[publication.ID]
+			if current == nil {
+				byID[publication.ID] = &item{Publication: publication, LastOpened: log.CreatedAt, Path: log.Path, Visits: 1}
+				continue
+			}
+			current.Visits++
+			if log.CreatedAt.After(current.LastOpened) {
+				current.LastOpened = log.CreatedAt
+				current.Path = log.Path
+			}
+		}
+		return nil
+	})
+	var items []item
+	for _, current := range byID {
+		items = append(items, *current)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].LastOpened.After(items[j].LastOpened) })
+	writeJSON(w, http.StatusOK, map[string]any{"history": items})
+}
+
+func (s *Server) sharedWithMe(w http.ResponseWriter, r *http.Request) {
+	user := s.requireAutomationUser(w, r)
+	if user == nil {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	var publications []Publication
+	_ = s.Store.ReadDB(func(db DB) error {
+		publications = publicationsSharedWithUser(db, *user)
+		return nil
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"publications": publications})
+}
+
+func (s *Server) bookmarks(w http.ResponseWriter, r *http.Request) {
+	user := s.requireAutomationUser(w, r)
+	if user == nil {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.listBookmarks(w, user)
+	case http.MethodPost:
+		var req struct {
+			PublicationID string `json:"publication_id"`
+			Slug          string `json:"slug"`
+			Kind          string `json:"kind"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		s.createBookmark(w, req.PublicationID, req.Slug, req.Kind, user)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) bookmarkActions(w http.ResponseWriter, r *http.Request) {
+	user := s.requireAutomationUser(w, r)
+	if user == nil {
+		return
+	}
+	if r.Method != http.MethodDelete {
+		methodNotAllowed(w)
+		return
+	}
+	idOrSlug := strings.Trim(strings.TrimPrefix(trimAPIVersionPath(r.URL.Path), "/api/bookmarks/"), "/")
+	s.deleteBookmark(w, idOrSlug, user)
+}
+
+func (s *Server) listBookmarks(w http.ResponseWriter, user *User) {
+	type item struct {
+		Bookmark    Bookmark    `json:"bookmark"`
+		Publication Publication `json:"publication"`
+	}
+	var items []item
+	_ = s.Store.ReadDB(func(db DB) error {
+		publications := map[string]Publication{}
+		for _, publication := range db.Publications {
+			publications[publication.ID] = publication
+		}
+		for _, bookmark := range db.Bookmarks {
+			if bookmark.UserID != user.ID {
+				continue
+			}
+			publication, ok := publications[bookmark.PublicationID]
+			if ok {
+				items = append(items, item{Bookmark: bookmark, Publication: publication})
+			}
+		}
+		return nil
+	})
+	sort.Slice(items, func(i, j int) bool { return items[i].Bookmark.CreatedAt.After(items[j].Bookmark.CreatedAt) })
+	writeJSON(w, http.StatusOK, map[string]any{"bookmarks": items})
+}
+
+func (s *Server) createBookmark(w http.ResponseWriter, publicationID, slug, kind string, user *User) {
+	if kind == "" {
+		kind = "read_later"
+	}
+	publication, ok := s.findAccessiblePublication(publicationID, slug, *user)
+	if !ok {
+		http.Error(w, "publication not found", http.StatusNotFound)
+		return
+	}
+	bookmark := Bookmark{ID: NewID("bmk"), UserID: user.ID, PublicationID: publication.ID, Kind: kind, CreatedAt: time.Now()}
+	if err := s.Store.UpsertBookmark(bookmark); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"bookmark": bookmark, "publication": publication})
+}
+
+func (s *Server) deleteBookmark(w http.ResponseWriter, idOrSlug string, user *User) {
+	publication, ok := s.findAccessiblePublication(idOrSlug, idOrSlug, *user)
+	if !ok {
+		http.Error(w, "publication not found", http.StatusNotFound)
+		return
+	}
+	if err := s.Store.DeleteBookmark(user.ID, publication.ID, "read_later"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user *User) {
@@ -2008,25 +2180,12 @@ func (s *Server) canReadPublication(r *http.Request, publication Publication) bo
 	if user == nil {
 		return false
 	}
-	if user.ID == publication.OwnerID {
-		return true
-	}
-	if publication.Visibility == "recipients" || publication.Visibility == "magic" {
-		allowed := false
-		_ = s.Store.ReadDB(func(db DB) error {
-			for _, share := range db.Shares {
-				if share.PublicationID != publication.ID {
-					continue
-				}
-				if share.UserID == user.ID || share.Email == user.Email || domainShareMatches(share.Email, user.Email) {
-					allowed = true
-				}
-			}
-			return nil
-		})
-		return allowed
-	}
-	return false
+	allowed := false
+	_ = s.Store.ReadDB(func(db DB) error {
+		allowed = publicationCanBeReadByUser(db, publication, *user)
+		return nil
+	})
+	return allowed
 }
 
 func (s *Server) logPublicationAccess(r *http.Request, publication Publication, path string, user *User, allowed bool, status int) {
@@ -2106,6 +2265,72 @@ func (s *Server) findPublicationOwned(idOrSlug, ownerID string) (Publication, bo
 	return found, ok
 }
 
+func (s *Server) findAccessiblePublication(id, slug string, user User) (Publication, bool) {
+	var found Publication
+	ok := false
+	_ = s.Store.ReadDB(func(db DB) error {
+		for _, publication := range db.Publications {
+			if (id != "" && publication.ID == id) || (slug != "" && publication.Slug == slug) {
+				if publicationCanBeReadByUser(db, publication, user) {
+					found, ok = publication, true
+				}
+				return nil
+			}
+		}
+		return nil
+	})
+	return found, ok
+}
+
+func publicationsSharedWithUser(db DB, user User) []Publication {
+	seen := map[string]bool{}
+	var publications []Publication
+	shared := map[string]bool{}
+	for _, share := range db.Shares {
+		if share.UserID == user.ID || share.Email == user.Email || domainShareMatches(share.Email, user.Email) {
+			shared[share.PublicationID] = true
+		}
+	}
+	for _, publication := range db.Publications {
+		if publication.OwnerID == user.ID {
+			continue
+		}
+		if !shared[publication.ID] {
+			continue
+		}
+		if seen[publication.ID] {
+			continue
+		}
+		seen[publication.ID] = true
+		publications = append(publications, publication)
+	}
+	sort.Slice(publications, func(i, j int) bool { return publications[i].CreatedAt.After(publications[j].CreatedAt) })
+	return publications
+}
+
+func publicationCanBeReadByUser(db DB, publication Publication, user User) bool {
+	if publication.Visibility == "public" {
+		return true
+	}
+	if user.ID == "" {
+		return false
+	}
+	if user.ID == publication.OwnerID {
+		return true
+	}
+	if publication.Visibility == "recipients" || publication.Visibility == "signed" || publication.Visibility == "magic" {
+		for _, share := range db.Shares {
+			if share.PublicationID != publication.ID {
+				continue
+			}
+			if share.UserID == user.ID || share.Email == user.Email || domainShareMatches(share.Email, user.Email) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func ownedPublicationSet(publications []Publication, ownerID string) map[string]bool {
 	owned := make(map[string]bool)
 	for _, publication := range publications {
@@ -2146,7 +2371,7 @@ func trimAPIVersionPath(path string) string {
 
 func validVisibility(value string) bool {
 	switch value {
-	case "private", "magic", "recipients", "public":
+	case "private", "magic", "recipients", "signed", "public":
 		return true
 	default:
 		return false
@@ -2583,16 +2808,26 @@ root.innerHTML='<style>' +
 '<aside class="panel" aria-label="Htmlshare tools">' +
 '<div class="top"><div class="brand"><img class="brand-mark" src="/logo.png" alt="" /><span class="brand-name"><span>html</span><span class="brand-share">share</span></span></div><button class="close" id="hs-close" type="button" aria-label="Close">×</button></div>' +
 '<button class="primary" id="hs-publish" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4-4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share your file</span></button>' +
-'<div class="actions"><button class="action" id="hs-download" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4M5 20h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></button><button class="action" id="hs-terms" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Terms</span></button><button class="action wide" id="hs-abuse-submit" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 3 20h18L12 3Zm0 6v5m0 3h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Publication abuse</span></button></div>' +
+'<div class="actions"><button class="action" id="hs-download" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4M5 20h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></button><button class="action" id="hs-terms" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Terms</span></button><button class="action" id="hs-read-later" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Read later</span></button><button class="action" id="hs-abuse-submit" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 3 20h18L12 3Zm0 6v5m0 3h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Abuse</span></button></div>' +
 '<div class="status" id="hs-status"></div>' +
 '</aside>' +
-'<button class="launcher" id="hs-launcher" type="button" aria-label="Open htmlshare tools"><img src="/logo.png" alt="" /></button>';
+'<button class="launcher" id="hs-launcher" type="button" aria-label="Open htmlshare tools"><img src="/logo-white.png" alt="" /></button>';
 var panel=root.querySelector(".panel");
 root.getElementById("hs-launcher").onclick=function(){panel.classList.toggle("open");};
 root.getElementById("hs-close").onclick=function(){panel.classList.remove("open");};
 root.getElementById("hs-terms").onclick=function(){window.open("/terms","_blank","noopener");};
 root.getElementById("hs-download").onclick=function(){window.location.href="/f/"+encodeURIComponent(slug)+"/?download=1";};
 root.getElementById("hs-publish").onclick=function(){window.location.href="/";};
+root.getElementById("hs-read-later").onclick=async function(){
+  var status=root.getElementById("hs-status");
+  status.textContent="Saving...";
+  try{
+    var res=await fetch("/api/bookmarks",{method:"POST",headers:{"content-type":"application/json"},credentials:"same-origin",body:JSON.stringify({slug:slug,kind:"read_later"})});
+    if(res.status===401||res.status===403){status.textContent="Sign in or use signed access first.";return;}
+    if(!res.ok){status.textContent="Could not save.";return;}
+    status.textContent="Saved for later.";
+  }catch(e){status.textContent="Could not save.";}
+};
 root.getElementById("hs-abuse-submit").onclick=async function(){
   window.location.href="/abuse?slug="+encodeURIComponent(slug);
 };

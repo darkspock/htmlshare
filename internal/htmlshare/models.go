@@ -177,6 +177,14 @@ type SignedAccessProof struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type Bookmark struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"user_id"`
+	PublicationID string    `json:"publication_id"`
+	Kind          string    `json:"kind"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type DB struct {
 	Users        []User              `json:"users"`
 	Sessions     []Session           `json:"sessions"`
@@ -192,4 +200,5 @@ type DB struct {
 	Comments     []Comment           `json:"comments"`
 	SignedTokens []SignedAccessToken `json:"signed_tokens"`
 	SignedProofs []SignedAccessProof `json:"signed_proofs"`
+	Bookmarks    []Bookmark          `json:"bookmarks"`
 }
