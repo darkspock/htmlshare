@@ -1022,6 +1022,19 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		http.Error(w, "invalid visibility", http.StatusBadRequest)
 		return
 	}
+	shareTargets, err := normalizeShareTargets(req.Share.Emails)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if visibility == "signed" {
+		for _, target := range shareTargets {
+			if strings.HasPrefix(target, "@") {
+				http.Error(w, "signed access requires specific email recipients", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 	now := time.Now()
 	expiresAt := req.ExpiresAt
 	if req.TTLSeconds > 0 {
@@ -1054,8 +1067,13 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	shareCount := 0
-	for _, target := range req.Share.Emails {
-		_, err := s.sharePublication(publication, target, req.Share.Message)
+	for _, target := range shareTargets {
+		var err error
+		if publication.Visibility == "signed" {
+			_, _, err = s.createSignedAccessForEmail(publication, target, req.Share.Message)
+		} else {
+			_, err = s.sharePublication(publication, target, req.Share.Message)
+		}
 		if err == nil {
 			shareCount++
 		}
@@ -2607,7 +2625,15 @@ func publicationCanBeReadByUser(db DB, publication Publication, user User) bool 
 	if user.ID == publication.OwnerID {
 		return true
 	}
-	if publication.Visibility == "recipients" || publication.Visibility == "signed" || publication.Visibility == "magic" {
+	if publication.Visibility == "signed" {
+		for _, proof := range db.SignedProofs {
+			if proof.PublicationID == publication.ID && proof.Email == user.Email {
+				return true
+			}
+		}
+		return false
+	}
+	if publication.Visibility == "recipients" || publication.Visibility == "magic" {
 		for _, share := range db.Shares {
 			if share.PublicationID != publication.ID {
 				continue

@@ -134,6 +134,89 @@ func TestAutomationSignupKeyAndPublishFlow(t *testing.T) {
 	}
 }
 
+func TestRegisteredSignedPublishCreatesInvitationAndRequiresProof(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	confirmed := now
+	owner := User{ID: "usr_owner", Email: "owner@example.com", Provider: "magic", EmailConfirmedAt: &confirmed, CreatedAt: now}
+	if err := store.WithDB(func(db *DB) error {
+		db.Users = append(db.Users, owner)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+		Mailer:        Mailer{DataDir: store.DataDir(), From: "test@example.com"},
+	}
+	apiKey, _, err := server.createAPIKey(owner.ID, "test key", now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	publishResp := postJSON(t, ts.URL+"/api/publish", apiKey, map[string]any{
+		"title":      "Signed Publish",
+		"visibility": "signed",
+		"share": map[string]any{
+			"emails": []string{"reader@example.com"},
+		},
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>Signed Publish</h1></body></html>",
+		},
+	})
+	if publishResp.StatusCode != http.StatusCreated {
+		t.Fatalf("publish status = %d", publishResp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, publishResp, &body)
+	if body["share_count"].(float64) != 1 {
+		t.Fatalf("share_count = %v, want 1", body["share_count"])
+	}
+	var publication Publication
+	_ = store.ReadDB(func(db DB) error {
+		if len(db.SignedTokens) != 1 {
+			t.Fatalf("signed tokens = %d, want 1", len(db.SignedTokens))
+		}
+		if len(db.SignedProofs) != 0 {
+			t.Fatalf("signed proofs = %d, want 0", len(db.SignedProofs))
+		}
+		publication = db.Publications[0]
+		return nil
+	})
+
+	readerConfirmed := now
+	readerSession := Session{ID: "ses_reader", UserID: "usr_reader", ExpiresAt: now.Add(time.Hour), CreatedAt: now}
+	if err := store.WithDB(func(db *DB) error {
+		db.Users = append(db.Users, User{ID: "usr_reader", Email: "reader@example.com", Provider: "magic", EmailConfirmedAt: &readerConfirmed, CreatedAt: now})
+		db.Sessions = append(db.Sessions, readerSession)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	client.Jar.SetCookies(mustURL(t, ts.URL), []*http.Cookie{SessionCookie(readerSession.ID, server.SessionSecret)})
+	readResp, err := client.Get(ts.URL + "/f/" + publication.Slug + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readResp.Body.Close()
+	if readResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("read before proof status = %d, want %d", readResp.StatusCode, http.StatusForbidden)
+	}
+}
+
 func TestFastPublishDoesNotRequireEmailOrAPIKey(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
@@ -537,7 +620,7 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	now := time.Now()
 	confirmed := now
 	owner := User{ID: "usr_owner", Email: "owner@example.com", Provider: "magic", EmailConfirmedAt: &confirmed, CreatedAt: now}
-	publication := Publication{ID: "pub_signed", OwnerID: owner.ID, Title: "Signed Publication", Slug: "signed-publication", Visibility: "recipients", RequireRegistration: true, Files: []string{"index.html"}, CreatedAt: now}
+	publication := Publication{ID: "pub_signed", OwnerID: owner.ID, Title: "Signed Publication", Slug: "signed-publication", Visibility: "signed", RequireRegistration: true, Files: []string{"index.html"}, CreatedAt: now}
 	if _, err := store.WritePublicationFile(publication.ID, "index.html", []byte("<!doctype html><html><body><h1>Signed Publication</h1><p>Legal paragraph</p></body></html>")); err != nil {
 		t.Fatal(err)
 	}
@@ -623,6 +706,26 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 		}
 		return nil
 	})
+
+	readerConfirmed := time.Now()
+	reader := User{ID: "usr_reader", Email: "reader@example.com", Provider: "magic", EmailConfirmedAt: &readerConfirmed, CreatedAt: time.Now()}
+	readerSession := Session{ID: "ses_reader", UserID: reader.ID, ExpiresAt: time.Now().Add(time.Hour), CreatedAt: time.Now()}
+	if err := store.WithDB(func(db *DB) error {
+		db.Users = append(db.Users, reader)
+		db.Sessions = append(db.Sessions, readerSession)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	readerClient.Jar.SetCookies(mustURL(t, ts.URL), []*http.Cookie{SessionCookie(readerSession.ID, server.SessionSecret)})
+	unsignedReadResp, err := readerClient.Get(ts.URL + "/f/" + publication.Slug + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unsignedReadResp.Body.Close()
+	if unsignedReadResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unsigned signed-access read status = %d, want %d", unsignedReadResp.StatusCode, http.StatusForbidden)
+	}
 
 	sendCodeResp, err := readerClient.PostForm(signedURL, url.Values{"action": []string{"send_code"}})
 	if err != nil {
