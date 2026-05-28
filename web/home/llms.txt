@@ -1,0 +1,237 @@
+# htmlshare agent instructions
+
+htmlshare is an AI-first service for publishing generated HTML files and sharing them with humans.
+
+Production base URL:
+
+```text
+https://share.metricauno.com
+```
+
+Use it when an assistant has generated an HTML file, prototype, invoice, market scan, or other static HTML/CSS/JS bundle and needs to create a shareable URL.
+
+## Fast path
+
+1. Register with `/api/ai/signup`.
+2. If the email is new, store the returned temporary `hsk_...` token. It is valid for 24 hours.
+3. The user must open the email and press the confirmation button. The token is then extended to 1 year.
+4. If the email already exists, no token is returned to the agent. A token is emailed to the account owner, or the user must provide an existing token.
+5. Use the `hsk_...` token as bearer auth and POST an HTML bundle to `/api/publish`.
+
+## Register
+
+For a human user, open:
+
+```text
+https://share.metricauno.com
+```
+
+Sign in with Google or request an email magic link.
+
+For an automated flow, call:
+
+```http
+POST https://share.metricauno.com/api/ai/signup
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "name": "User Name",
+  "agent": "claude",
+  "intent": "publish-html-files"
+}
+```
+
+The email address must be confirmed before durable automation is enabled. Unconfirmed automatically-created accounts and their content may be deleted after 24 hours.
+
+If the email is new or not yet confirmed, the signup response returns a temporary agent token:
+
+```json
+{
+  "api_key": "hsk_...",
+  "token_expires_at": "2026-05-29T10:00:00Z",
+  "confirmation_sent": true
+}
+```
+
+The token works for 24 hours. The email confirmation link opens a browser page with a confirmation button. The account is not confirmed by link prefetch alone. When the user presses the button, the temporary token is extended to 1 year.
+
+If the email already belongs to a confirmed account, the signup response does not return a token:
+
+```json
+{
+  "existing_account": true,
+  "token_sent": true,
+  "next": "This email is already registered. A new agent token has been sent to the account owner. The LLM must ask the user to provide/store that token."
+}
+```
+
+In that case, ask the user to copy the token from email or provide an existing `hsk_...` token. Do not attempt to register the same confirmed email again.
+
+## Get an agent token
+
+There are two supported ways to create the `hsk_...` agent token.
+
+### Browser flow
+
+1. Open `https://share.metricauno.com/app/`.
+2. Sign in with Google or email magic link.
+3. Go to `Agent keys`.
+4. Click `Create key`.
+5. Copy the token. It starts with `hsk_`.
+
+### Agent flow for a confirmed browser session
+
+If the user is already signed in and confirmed in a browser/session, an agent can create a token with that session cookie:
+
+```http
+POST https://share.metricauno.com/api/api-keys
+Content-Type: application/json
+Cookie: htmlshare_session=...
+
+{
+  "name": "Claude Cowork"
+}
+```
+
+Successful response:
+
+```json
+{
+  "api_key": "hsk_...",
+  "prefix": "hsk_..."
+}
+```
+
+If the response is `403 email confirmation required`, the account is not confirmed. If the response is `401 login required`, the session cookie is missing.
+
+Use the token as:
+
+```http
+Authorization: Bearer hsk_...
+```
+
+Tokens are only shown once. Store them in the agent's secret store.
+
+## Publish without MCP
+
+Use the direct HTTP API when the assistant can make a POST request but cannot run MCP.
+
+```http
+POST https://share.metricauno.com/api/publish
+Authorization: Bearer hsk_...
+Content-Type: application/json
+
+{
+  "title": "European market scan",
+  "visibility": "recipients",
+  "require_registration": true,
+  "ttl_seconds": 86400,
+  "files": {
+    "index.html": "<!doctype html><html><head><link rel=\"stylesheet\" href=\"style.css\"></head><body><main><h1>Market scan</h1></main><script src=\"app.js\"></script></body></html>",
+    "style.css": "body{font-family:system-ui;margin:40px}",
+    "app.js": "console.log('ready')"
+  },
+  "share": {
+    "emails": ["reader@example.com", "@example.com"],
+    "message": "Here is the HTML file."
+  }
+}
+```
+
+Successful response:
+
+```json
+{
+  "id": "pub_...",
+  "slug": "european-market-scan-...",
+  "url": "https://share.metricauno.com/f/european-market-scan-.../",
+  "shares": []
+}
+```
+
+The `files` object is a map of filename to text content. Include `index.html` for the main page. CSS, JavaScript, SVG, JSON and other text assets can be included as additional keys.
+
+Supported visibility values:
+
+```text
+private
+magic
+recipients
+public
+```
+
+Recipient targets can be full email addresses or a domain allow-list entry in the form `@example.com`.
+
+Recommended default for private sharing:
+
+```json
+{
+  "visibility": "recipients",
+  "require_registration": true
+}
+```
+
+## Share an existing file
+
+```http
+POST https://share.metricauno.com/api/share
+Authorization: Bearer hsk_...
+Content-Type: application/json
+
+{
+  "slug": "european-market-scan-...",
+  "emails": ["reader@example.com"],
+  "message": "Please review this file."
+}
+```
+
+## OpenAPI
+
+The OpenAPI document is available at:
+
+```text
+https://share.metricauno.com/api
+https://share.metricauno.com/api/openapi.json
+```
+
+## MCP
+
+Remote MCP endpoint:
+
+```text
+https://share.metricauno.com/mcp
+```
+
+Suggested environment:
+
+```text
+HTMLSHARE_URL=https://share.metricauno.com
+HTMLSHARE_TOKEN=hsk_...
+```
+
+Use the same `hsk_...` agent key as the bearer token for MCP.
+
+## Cowork setup
+
+In Cowork, allow the htmlshare domain before trying to call the API:
+
+```text
+Settings / Capabilities / Additional allowed domains
+```
+
+Add:
+
+```text
+share.metricauno.com
+```
+
+After changing allowed domains, open a new conversation. Existing conversations may not pick up the updated capability settings.
+
+## Operational notes
+
+- Do not publish secrets, credentials, private keys, or sensitive personal data inside HTML files.
+- HTML files may include JavaScript, but the recipient should only receive content intended for them.
+- Abuse can be reported from the shared page.
+- Access logs may record IP address, timestamp, path, user agent and authenticated email when available.
+- If comments are disabled in the current version, publishing and sharing still work through API and MCP.

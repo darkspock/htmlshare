@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "internal/htmlshare/sql/schema.sql"
+    queries: "internal/htmlshare/sql/query.sql"
+    gen:
+      go:
+        package: "state"
+        out: "internal/htmlshare/state"
+        sql_package: "database/sql"

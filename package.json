@@ -1,0 +1,9 @@
+{
+  "name": "htmlshare-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/htmlshare",
+    "mcp": "go run ./cmd/htmlshare-mcp",
+    "check": "go test ./..."
+  }
+}

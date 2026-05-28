@@ -1,0 +1,14 @@
+[Unit]
+Description=htmlshare
+After=network-online.target docker.service postgresql@16-main.service minio.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/htmlshare
+ExecStart=/usr/bin/docker compose --env-file /opt/htmlshare/image.env -f /opt/htmlshare/docker-compose.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /opt/htmlshare/image.env -f /opt/htmlshare/docker-compose.yml down
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

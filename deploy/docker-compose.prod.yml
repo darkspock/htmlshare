@@ -1,0 +1,18 @@
+name: htmlshare
+
+services:
+  app:
+    image: ${HTMLSHARE_IMAGE:?Set HTMLSHARE_IMAGE in /opt/htmlshare/image.env}
+    container_name: htmlshare
+    network_mode: host
+    env_file:
+      - /etc/htmlshare/htmlshare.env
+    restart: unless-stopped
+    volumes:
+      - /var/lib/htmlshare:/var/lib/htmlshare
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4546/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

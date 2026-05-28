@@ -1,0 +1,75 @@
+name: htmlshare-dev
+
+services:
+  app:
+    build:
+      context: .
+    user: "0:0"
+    environment:
+      PORT: "4545"
+      APP_URL: "http://localhost:46545"
+      DATA_DIR: "/app/data"
+      SESSION_SECRET: "dev-compose-session-secret-change-me"
+      DATABASE_URL: "postgres://htmlshare:htmlshare_dev_password@postgres:5432/htmlshare?sslmode=disable"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_REGION: "us-east-1"
+      S3_BUCKET: "htmlshare-publications"
+      S3_ACCESS_KEY_ID: "htmlshare_minio"
+      S3_SECRET_ACCESS_KEY: "htmlshare_minio_password"
+      SMTP_ADDR: "mailpit:1025"
+      EMAIL_FROM: "htmlshare <htmlshare@example.test>"
+    ports:
+      - "46545:4545"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    volumes:
+      - htmlshare_app_data:/app/data
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: "htmlshare"
+      POSTGRES_USER: "htmlshare"
+      POSTGRES_PASSWORD: "htmlshare_dev_password"
+    ports:
+      - "56432:5432"
+    volumes:
+      - htmlshare_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U htmlshare -d htmlshare"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "htmlshare_minio"
+      MINIO_ROOT_PASSWORD: "htmlshare_minio_password"
+    ports:
+      - "59100:9000"
+      - "59101:9001"
+    volumes:
+      - htmlshare_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "58025:8025"
+      - "58026:1025"
+
+volumes:
+  htmlshare_app_data:
+  htmlshare_postgres:
+  htmlshare_minio:
