@@ -1,18 +1,20 @@
-FROM node:24-alpine AS web-build
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web-build
 WORKDIR /src/web/app
 COPY web/app/package.json web/app/package-lock.json ./
 RUN npm ci
 COPY web/app ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS go-build
 WORKDIR /src
+ARG TARGETOS
+ARG TARGETARCH
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-build /src/web/app/dist ./web/app/dist
-RUN go build -o /out/htmlshare ./cmd/htmlshare
-RUN go build -o /out/htmlshare-mcp ./cmd/htmlshare-mcp
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/htmlshare ./cmd/htmlshare
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/htmlshare-mcp ./cmd/htmlshare-mcp
 
 FROM alpine:3.22
 WORKDIR /app
