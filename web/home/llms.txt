@@ -125,7 +125,7 @@ Rules for fast publish:
 - Store the `agent_id` in the conversation memory or local session state when available.
 - Use `visibility: "public"` or omit `visibility` for a normal temporary link.
 - Use `visibility: "recipients"` plus `share.emails` when the user says only specific people should read it. This does not require an `hsk_...` token.
-- Do not write recipient emails, allowed domains, access lists, magic links, or who-can-read details inside the HTML content. Access control is handled by htmlshare.
+- Do not write recipient emails, allowed domains, access lists, magic links, "restricted HTML" notices, or who-can-read details inside the HTML content. Access control is handled by htmlshare outside the document.
 - Do not publish secrets, credentials, private keys, internal tokens, or sensitive personal data.
 - Keep `ttl_seconds` under one week. Shorter is better for temporary reports.
 
@@ -145,7 +145,7 @@ Content-Type: application/json
   "visibility": "recipients",
   "ttl_seconds": 86400,
   "files": {
-    "index.html": "<!doctype html><html><body><h1>Restricted review file</h1><p>Open this file from the email link sent by htmlshare.</p></body></html>"
+    "index.html": "<!doctype html><html><body><h1>Quarterly review</h1><p>This is the report content to review.</p></body></html>"
   },
   "share": {
     "emails": ["recipient@example.com"],

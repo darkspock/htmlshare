@@ -308,6 +308,75 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	}
 }
 
+func TestRestrictedAccessNoticeHTMLIsNeutralized(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+		Mailer:        Mailer{DataDir: store.DataDir(), From: "test@example.com"},
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	publishResp := postJSON(t, ts.URL+"/api/v1/publish", "", map[string]any{
+		"mode":        "fast",
+		"agent_id":    "access-notice-redaction-session",
+		"agent_name":  "codex",
+		"title":       "Access notice check",
+		"visibility":  "recipients",
+		"ttl_seconds": 3600,
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>HTML restringido</h1><p>Esta pagina de prueba esta configurada para ser visible solo por reader@example.com.</p><p>El acceso requiere confirmar el email mediante el enlace magico enviado por htmlshare.</p></body></html>",
+		},
+		"share": map[string]any{
+			"emails": []string{"reader@example.com"},
+		},
+	})
+	if publishResp.StatusCode != http.StatusCreated {
+		t.Fatalf("fast recipient publish status = %d", publishResp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, publishResp, &body)
+	publicURL := body["url"].(string)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	magicURL := latestOutboxLink(t, store)
+	openResp, err := client.Post(magicURL, "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, openResp.Body)
+	_ = openResp.Body.Close()
+
+	viewResp, err := client.Get(publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(viewResp.Body)
+	_ = viewResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := strings.ToLower(string(raw))
+	if viewResp.StatusCode != http.StatusOK || !strings.Contains(page, "access controlled file") {
+		t.Fatalf("recipient view status/body = %d %q", viewResp.StatusCode, string(raw))
+	}
+	for _, forbidden := range []string{"reader@example.com", "html restringido", "visible solo", "enlace magico"} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("recipient view leaked access notice %q in body: %q", forbidden, string(raw))
+		}
+	}
+}
+
 func TestAPIV1PublishAlias(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

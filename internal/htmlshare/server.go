@@ -2569,7 +2569,47 @@ func (s *Server) redactPublicationAccessTargets(raw []byte, publication Publicat
 		}
 		body = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(target)).ReplaceAllString(body, replacement)
 	}
+	if looksLikeAccessNoticeHTML(body) {
+		return []byte(accessControlledDocumentHTML(publication.Title))
+	}
 	return []byte(body)
+}
+
+func looksLikeAccessNoticeHTML(body string) bool {
+	normalized := strings.ToLower(body)
+	return strings.Contains(normalized, "html restringido") ||
+		strings.Contains(normalized, "visible solo por authorized recipient") ||
+		strings.Contains(normalized, "visible only by authorized recipient") ||
+		strings.Contains(normalized, "visible only to authorized recipient") ||
+		strings.Contains(normalized, "enlace magico enviado por htmlshare") ||
+		strings.Contains(normalized, "magic link sent by htmlshare")
+}
+
+func accessControlledDocumentHTML(title string) string {
+	if strings.TrimSpace(title) == "" {
+		title = "Shared file"
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>` + htmlEscape(title) + `</title>
+  <style>
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1f2937;background:#f7f2ea}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px}
+    main{width:min(100%,760px);background:#fff;border:1px solid #d9d0c3;border-radius:12px;padding:44px;box-shadow:0 18px 50px rgba(31,41,55,.08)}
+    h1{margin:0 0 18px;font-size:42px;line-height:1.05}
+    p{font-size:18px;line-height:1.6;margin:0;color:#4b5563}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Access controlled file</h1>
+    <p>This file is protected by htmlshare. Open it from the email link sent to an authorized recipient.</p>
+  </main>
+</body>
+</html>`
 }
 
 func domainShareMatches(shareTarget, email string) bool {
