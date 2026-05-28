@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -592,7 +594,12 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readerClient := &http.Client{Jar: readerJar}
+	readerClient := &http.Client{
+		Jar: readerJar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	signedOpenReq, err := http.NewRequest(http.MethodGet, signedURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -606,6 +613,49 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	_ = signedOpenResp.Body.Close()
 	if signedOpenResp.StatusCode != http.StatusOK {
 		t.Fatalf("signed open status = %d", signedOpenResp.StatusCode)
+	}
+	_ = store.ReadDB(func(db DB) error {
+		if len(db.SignedProofs) != 0 {
+			t.Fatalf("signed proofs after open = %d, want 0", len(db.SignedProofs))
+		}
+		if len(db.SignedTokens) != 1 || !db.SignedTokens[0].UsedAt.IsZero() {
+			t.Fatalf("signed token should not be consumed by opening the link")
+		}
+		return nil
+	})
+
+	sendCodeResp, err := readerClient.PostForm(signedURL, url.Values{"action": []string{"send_code"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sendCodeResp.StatusCode != http.StatusOK {
+		t.Fatalf("send code status = %d", sendCodeResp.StatusCode)
+	}
+	_ = sendCodeResp.Body.Close()
+	outbox, err := os.ReadFile(filepath.Join(store.DataDir(), "outbox.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(outbox)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("empty outbox")
+	}
+	var outboxEntry map[string]string
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &outboxEntry); err != nil {
+		t.Fatal(err)
+	}
+	code := regexp.MustCompile(`[0-9]{6}`).FindString(outboxEntry["text"])
+	if code == "" {
+		t.Fatal("signature code not found in outbox")
+	}
+
+	verifyResp, err := readerClient.PostForm(signedURL, url.Values{"action": []string{"verify"}, "code": []string{code}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifyResp.Body.Close()
+	if verifyResp.StatusCode != http.StatusFound {
+		t.Fatalf("verify status = %d", verifyResp.StatusCode)
 	}
 
 	commentsResp, err := readerClient.Get(ts.URL + "/api/public-comments/" + publication.Slug)

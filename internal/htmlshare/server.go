@@ -3,12 +3,14 @@ package htmlshare
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"mime"
 	"net"
 	"net/http"
@@ -1960,75 +1962,210 @@ func (s *Server) signedAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "token required", http.StatusBadRequest)
 		return
 	}
-	hash := HashToken(raw)
-	var user User
-	var publicationSlug string
-	var tokenID string
-	err := s.Store.WithDB(func(db *DB) error {
-		for i := range db.SignedTokens {
-			token := &db.SignedTokens[i]
-			if token.TokenHash == hash && token.UsedAt.IsZero() && token.ExpiresAt.After(time.Now()) {
-				token.UsedAt = time.Now()
-				tokenID = token.ID
-				email := token.Email
-				for j := range db.Users {
-					if db.Users[j].Email == email {
-						now := time.Now()
-						db.Users[j].EmailConfirmedAt = &now
-						db.Users[j].AutoProvisioned = false
-						user = db.Users[j]
-						break
-					}
-				}
-				if user.ID == "" {
-					now := time.Now()
-					user = User{ID: NewID("usr"), Email: email, Provider: "signed", EmailConfirmedAt: &now, CreatedAt: now}
-					db.Users = append(db.Users, user)
-				}
-				for _, publication := range db.Publications {
-					if publication.ID == token.PublicationID {
-						publicationSlug = publication.Slug
-						hasShare := false
-						for shareIndex := range db.Shares {
-							share := &db.Shares[shareIndex]
-							if share.PublicationID == publication.ID && share.Email == email {
-								share.UserID = user.ID
-								hasShare = true
-								break
-							}
-						}
-						if !hasShare {
-							db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: email, UserID: user.ID, CreatedAt: time.Now()})
-						}
-						break
-					}
-				}
-				db.SignedProofs = append(db.SignedProofs, SignedAccessProof{
-					ID:            NewID("sap"),
-					PublicationID: token.PublicationID,
-					Email:         email,
-					IP:            clientIP(r),
-					UserAgent:     r.UserAgent(),
-					TokenID:       token.ID,
-					CreatedAt:     time.Now(),
-				})
-				return nil
-			}
+	switch r.Method {
+	case http.MethodGet:
+		s.renderSignedAccess(w, raw, "")
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		return errors.New("invalid signed access token")
-	})
+		switch r.FormValue("action") {
+		case "send_code":
+			if err := s.sendSignedAccessCode(raw); err != nil {
+				s.renderSignedAccess(w, raw, err.Error())
+				return
+			}
+			s.renderSignedAccess(w, raw, "Code sent. Check the authorized email and enter the code here.")
+		case "verify":
+			publicationSlug, session, err := s.verifySignedAccessCode(raw, strings.TrimSpace(r.FormValue("code")), r)
+			if err != nil {
+				s.renderSignedAccess(w, raw, err.Error())
+				return
+			}
+			http.SetCookie(w, SessionCookie(session.ID, s.SessionSecret))
+			http.Redirect(w, r, "/f/"+publicationSlug+"/", http.StatusFound)
+		default:
+			http.Error(w, "invalid signed access action", http.StatusBadRequest)
+		}
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) renderSignedAccess(w http.ResponseWriter, raw, message string) {
+	token, publication, err := s.findSignedAccessToken(raw)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	session := Session{ID: NewID("ses"), UserID: user.ID, ExpiresAt: time.Now().Add(30 * 24 * time.Hour), CreatedAt: time.Now()}
-	_ = s.Store.WithDB(func(db *DB) error {
-		db.Sessions = append(db.Sessions, session)
+	w.Header().Set("content-type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, signedAccessHTML(raw, publication, token, message))
+}
+
+func (s *Server) findSignedAccessToken(raw string) (SignedAccessToken, Publication, error) {
+	hash := HashToken(raw)
+	var token SignedAccessToken
+	var publication Publication
+	err := s.Store.ReadDB(func(db DB) error {
+		for _, candidate := range db.SignedTokens {
+			if candidate.TokenHash != hash {
+				continue
+			}
+			if !candidate.UsedAt.IsZero() {
+				return errors.New("this invitation has already been signed")
+			}
+			if !candidate.ExpiresAt.After(time.Now()) {
+				return errors.New("this signed access invitation has expired")
+			}
+			token = candidate
+			for _, item := range db.Publications {
+				if item.ID == token.PublicationID {
+					publication = item
+					return nil
+				}
+			}
+			return errors.New("signed access publication not found")
+		}
+		return errors.New("invalid signed access token")
+	})
+	if err != nil {
+		return SignedAccessToken{}, Publication{}, err
+	}
+	return token, publication, nil
+}
+
+func (s *Server) sendSignedAccessCode(raw string) error {
+	token, publication, err := s.findSignedAccessToken(raw)
+	if err != nil {
+		return err
+	}
+	code := newSignedAccessCode()
+	now := time.Now()
+	err = s.Store.WithDB(func(db *DB) error {
+		user := ensureSignedAccessUser(db, token.Email, now)
+		db.MagicLinks = append(db.MagicLinks, MagicLink{
+			ID:            NewID("hsc"),
+			UserID:        user.ID,
+			Email:         token.Email,
+			TokenHash:     HashToken(token.ID + "|" + code),
+			Purpose:       "signed_code",
+			PublicationID: token.PublicationID,
+			ExpiresAt:     now.Add(10 * time.Minute),
+			CreatedAt:     now,
+		})
 		return nil
 	})
-	_ = tokenID
-	http.SetCookie(w, SessionCookie(session.ID, s.SessionSecret))
-	http.Redirect(w, r, "/f/"+publicationSlug+"/", http.StatusFound)
+	if err != nil {
+		return err
+	}
+	text := "Signature code for " + publication.Title + ":\n\n" + code + "\n\nThis code expires in 10 minutes."
+	html := `<p>Signature code for <strong>` + htmlEscape(publication.Title) + `</strong>:</p><p><code style="font-size:24px">` + htmlEscape(code) + `</code></p><p>This code expires in 10 minutes.</p>`
+	_ = s.Mailer.Send(token.Email, "Signature code: "+publication.Title, text, html)
+	return nil
+}
+
+func (s *Server) verifySignedAccessCode(raw, code string, r *http.Request) (string, Session, error) {
+	if code == "" {
+		return "", Session{}, errors.New("signature code required")
+	}
+	hash := HashToken(raw)
+	var user User
+	var publicationSlug string
+	var session Session
+	err := s.Store.WithDB(func(db *DB) error {
+		for i := range db.SignedTokens {
+			token := &db.SignedTokens[i]
+			if token.TokenHash != hash {
+				continue
+			}
+			if !token.UsedAt.IsZero() {
+				return errors.New("this invitation has already been signed")
+			}
+			if !token.ExpiresAt.After(time.Now()) {
+				return errors.New("this signed access invitation has expired")
+			}
+			codeHash := HashToken(token.ID + "|" + code)
+			var codeLink *MagicLink
+			for j := range db.MagicLinks {
+				link := &db.MagicLinks[j]
+				if link.Purpose == "signed_code" && link.PublicationID == token.PublicationID && link.Email == token.Email && link.TokenHash == codeHash && link.UsedAt.IsZero() && link.ExpiresAt.After(time.Now()) {
+					codeLink = link
+					break
+				}
+			}
+			if codeLink == nil {
+				return errors.New("invalid or expired signature code")
+			}
+			now := time.Now()
+			codeLink.UsedAt = now
+			token.UsedAt = now
+			user = ensureSignedAccessUser(db, token.Email, now)
+			for _, publication := range db.Publications {
+				if publication.ID == token.PublicationID {
+					publicationSlug = publication.Slug
+					break
+				}
+			}
+			if publicationSlug == "" {
+				return errors.New("signed access publication not found")
+			}
+			hasShare := false
+			for shareIndex := range db.Shares {
+				share := &db.Shares[shareIndex]
+				if share.PublicationID == token.PublicationID && share.Email == token.Email {
+					share.UserID = user.ID
+					hasShare = true
+					break
+				}
+			}
+			if !hasShare {
+				db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: token.PublicationID, Email: token.Email, UserID: user.ID, CreatedAt: now})
+			}
+			db.SignedProofs = append(db.SignedProofs, SignedAccessProof{
+				ID:            NewID("sap"),
+				PublicationID: token.PublicationID,
+				Email:         token.Email,
+				IP:            clientIP(r),
+				UserAgent:     r.UserAgent(),
+				TokenID:       token.ID,
+				CreatedAt:     now,
+			})
+			session = Session{ID: NewID("ses"), UserID: user.ID, ExpiresAt: now.Add(30 * 24 * time.Hour), CreatedAt: now}
+			db.Sessions = append(db.Sessions, session)
+			return nil
+		}
+		return errors.New("invalid signed access token")
+	})
+	if err != nil {
+		return "", Session{}, err
+	}
+	_ = user
+	return publicationSlug, session, nil
+}
+
+func ensureSignedAccessUser(db *DB, email string, now time.Time) User {
+	for j := range db.Users {
+		if db.Users[j].Email == email {
+			if db.Users[j].EmailConfirmedAt == nil {
+				db.Users[j].EmailConfirmedAt = &now
+			}
+			db.Users[j].AutoProvisioned = false
+			return db.Users[j]
+		}
+	}
+	user := User{ID: NewID("usr"), Email: email, Provider: "signed", EmailConfirmedAt: &now, CreatedAt: now}
+	db.Users = append(db.Users, user)
+	return user
+}
+
+func newSignedAccessCode() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		sum := sha256.Sum256([]byte(RandomToken(16)))
+		return fmt.Sprintf("%06d", int(sum[0])<<8+int(sum[1]))
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 func (s *Server) googleStart(w http.ResponseWriter, r *http.Request) {
@@ -2959,6 +3096,50 @@ func confirmMagicHTML(token, email string) string {
     <form method="post" action="/auth/magic?token=` + url.QueryEscape(token) + `">
       <button type="submit">Confirm and activate</button>
     </form>
+  </main>
+</body>
+</html>`
+}
+
+func signedAccessHTML(raw string, publication Publication, token SignedAccessToken, message string) string {
+	action := "/auth/signed?token=" + url.QueryEscape(raw)
+	status := ""
+	if strings.TrimSpace(message) != "" {
+		status = `<p class="status">` + htmlEscape(message) + `</p>`
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign access · htmlshare</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#242624;color:#fefaf6}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:#f5f2ed;background-image:linear-gradient(rgba(36,38,36,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(36,38,36,.08) 1px,transparent 1px);background-size:72px 72px}
+    main{width:min(100%,620px);background:#242624;border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 70px rgba(0,0,0,.18);padding:36px}.brand-page{display:inline-flex;align-items:center;gap:10px;color:#fefaf6;text-decoration:none}.brand-page img{width:58px;height:34px;object-fit:contain}.brand-page b{font-size:18px;letter-spacing:-.03em}.brand-page span{color:#b8bab8;font-weight:400}
+    h1{margin:28px 0 10px;font-size:42px;line-height:.96;letter-spacing:-.03em}p{color:#b8bab8;line-height:1.55}.eyebrow{margin:24px 0 0;color:#b8a8d8;font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase}.status{border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px 14px;background:#2e302e;color:#fefaf6}
+    form{display:flex;gap:10px;margin-top:14px}input{min-width:0;flex:1;min-height:52px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:#181a18;color:#fefaf6;padding:0 18px;font:700 16px/1 inherit}button{min-height:52px;border:0;border-radius:999px;background:#fefaf6;color:#242624;padding:0 22px;font:800 15px/1 inherit;cursor:pointer}.secondary button{width:100%}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="brand-page" href="/"><img src="/logo.png" alt=""><b>html<span>share</span></b></a>
+    <p class="eyebrow">Signed access</p>
+    <h1>Confirm your signature.</h1>
+    <p><strong>` + htmlEscape(publication.Title) + `</strong> requires email-code confirmation. Opening this page alone does not sign the file.</p>
+    <p>Send a code to the authorized email, then enter it here. The signature is recorded only after the code is accepted.</p>
+    ` + status + `
+    <form class="secondary" method="post" action="` + action + `">
+      <input type="hidden" name="action" value="send_code">
+      <button type="submit">Send code</button>
+    </form>
+    <form method="post" action="` + action + `">
+      <input type="hidden" name="action" value="verify">
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" aria-label="Signature code">
+      <button type="submit">Sign and open</button>
+    </form>
+    <p class="eyebrow">Invitation expires ` + token.ExpiresAt.Format(time.RFC1123) + `</p>
   </main>
 </body>
 </html>`
