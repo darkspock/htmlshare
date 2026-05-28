@@ -65,7 +65,9 @@ docker compose down
 
 ## Production Deploy
 
-Production deploys from GitHub Actions. The action builds the Docker image, pushes it to GHCR, then SSHes into the server and runs:
+Production deploys from GitHub Actions. Before building, the action computes a deploy hash from the runtime inputs (`.dockerignore`, `Dockerfile`, Go code, SQL, static home, React app, deploy compose files, and package manifests). If the hash matches `/opt/htmlshare/deploy.hash` on the server, the action skips both image build and deploy.
+
+When the hash changes, the action builds the Docker image, pushes it to GHCR, then SSHes into the server and runs:
 
 ```bash
 cd /opt/htmlshare
