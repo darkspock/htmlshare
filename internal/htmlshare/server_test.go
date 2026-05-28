@@ -195,6 +195,35 @@ func TestFastPublishDoesNotRequireEmailOrAPIKey(t *testing.T) {
 	})
 }
 
+func TestAPIV1PublishAlias(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: store, AppURL: "http://example.test", SessionSecret: "test-secret"}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	resp := postJSON(t, ts.URL+"/api/v1/publish", "", map[string]any{
+		"mode":        "fast",
+		"agent_id":    "codex-v1-alias-check",
+		"title":       "API v1 Alias",
+		"ttl_seconds": 3600,
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>API v1 Alias</h1></body></html>",
+		},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("v1 publish status = %d", resp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, resp, &body)
+	if body["mode"] != "fast" {
+		t.Fatalf("mode = %v, want fast", body["mode"])
+	}
+}
+
 func TestExpiredAutomaticRegistrationDeletesOwnedContent(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

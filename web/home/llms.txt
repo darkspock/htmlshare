@@ -18,9 +18,9 @@ Use one of these three options.
 
 This is the recommended default. Use it when the assistant can make HTTP requests. It needs no MCP server, no browser automation, and no local install.
 
-For quick temporary links, call `/api/publish` with `mode: "fast"` and a stable `agent_id`. No email, OAuth, or bearer token is required.
+For quick temporary links, call `/api/v1/publish` with `mode: "fast"` and a stable `agent_id`. No email, OAuth, or bearer token is required.
 
-For account-owned sharing, call `/api/publish` with `mode: "registered"` and `Authorization: Bearer hsk_...`.
+For account-owned sharing, call `/api/v1/publish` with `mode: "registered"` and `Authorization: Bearer hsk_...`.
 
 ### Option 2: Build a local skill
 
@@ -28,7 +28,7 @@ Use this when the assistant supports reusable skills or project instructions. Cr
 
 1. Generates or collects an `index.html` plus optional CSS/JS/assets.
 2. Stores a stable `agent_id` for the current user/project/session.
-3. Calls `POST https://share.metricauno.com/api/publish` with `mode: "fast"` by default.
+3. Calls `POST https://share.metricauno.com/api/v1/publish` with `mode: "fast"` by default.
 4. Returns the `url` field to the user.
 5. Uses registered `hsk_...` auth only when the user asks for controlled sharing, analytics, recipient allow-lists, signed access, or long-lived library storage.
 
@@ -86,7 +86,7 @@ Use this only when the user wants account ownership, access logs, recipient cont
 Call:
 
 ```http
-POST https://share.metricauno.com/api/publish
+POST https://share.metricauno.com/api/v1/publish
 Content-Type: application/json
 
 {
@@ -148,7 +148,7 @@ To create an agent key from the app:
 If the user explicitly wants account-owned automation and asks the assistant to start registration, call:
 
 ```http
-POST https://share.metricauno.com/api/ai/signup
+POST https://share.metricauno.com/api/v1/ai/signup
 Content-Type: application/json
 
 {
@@ -168,7 +168,7 @@ If the email already belongs to a confirmed account, the API does not return a t
 Use the direct API when the assistant has an `hsk_...` token:
 
 ```http
-POST https://share.metricauno.com/api/publish
+POST https://share.metricauno.com/api/v1/publish
 Authorization: Bearer hsk_...
 Content-Type: application/json
 
@@ -200,7 +200,7 @@ Recipient targets can be full email addresses or domain allow-list entries in th
 ## Share an existing registered file
 
 ```http
-POST https://share.metricauno.com/api/share
+POST https://share.metricauno.com/api/v1/share
 Authorization: Bearer hsk_...
 Content-Type: application/json
 
@@ -215,7 +215,7 @@ Content-Type: application/json
 
 ```text
 https://share.metricauno.com/api
-https://share.metricauno.com/api/openapi.json
+https://share.metricauno.com/api/v1/openapi.json
 ```
 
 ## MCP

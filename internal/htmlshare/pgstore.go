@@ -3,11 +3,14 @@ package htmlshare
 import (
 	"context"
 	"database/sql"
+	"embed"
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,9 +20,58 @@ import (
 //go:embed sql/schema.sql
 var postgresSchema string
 
+//go:embed sql/migrations/*.sql
+var postgresMigrations embed.FS
+
 func ensurePostgresSchema(db *sql.DB) error {
-	_, err := db.Exec(postgresSchema)
-	return err
+	if _, err := db.Exec(postgresSchema); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version text PRIMARY KEY,
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`); err != nil {
+		return err
+	}
+	return applyPostgresMigrations(db)
+}
+
+func applyPostgresMigrations(db *sql.DB) error {
+	files, err := fs.Glob(postgresMigrations, "sql/migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	sort.Strings(files)
+	for _, name := range files {
+		version := filepath.Base(name)
+		var applied bool
+		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&applied); err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		raw, err := postgresMigrations.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(string(raw)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) loadPostgres() error {

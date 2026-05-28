@@ -6,6 +6,17 @@ AI-first publishing for generated HTML files.
 
 Product scope and roadmap decisions are tracked in [docs/product-spec.md](docs/product-spec.md).
 
+## Project Shape
+
+This is intentionally one project and one deployable image:
+
+- `cmd/` and `internal/htmlshare/` contain the Go backend.
+- `web/home/` contains the static SEO home, legal pages, logo, favicon, and `llms.txt`.
+- `web/app/` contains the React console.
+- `internal/htmlshare/sql/` contains the SQLC schema, queries, and PostgreSQL migrations.
+
+Keep frontend and backend in the same repository unless the UI needs an independent release cycle, a separate CDN, or multiple frontends share the same API. A single image keeps `/`, `/app/`, `/llms.txt`, `/api/v1`, and `/mcp` in sync.
+
 ## Run
 
 ```bash
@@ -64,6 +75,20 @@ docker compose --env-file /opt/htmlshare/image.env -f /opt/htmlshare/docker-comp
 
 The production compose file runs only the app container. It uses `network_mode: host` so the app can keep using the already-installed PostgreSQL, MinIO, Nginx, and email configuration from `/etc/htmlshare/htmlshare.env`.
 
+## API and Database Versioning
+
+The canonical API prefix is `/api/v1`. Legacy `/api/...` routes remain as compatibility aliases while the product is early.
+
+The OpenAPI document is served at:
+
+```text
+/api
+/api/v1
+/api/v1/openapi.json
+```
+
+PostgreSQL bootstraps from `internal/htmlshare/sql/schema.sql`, which is also the SQLC schema source. Incremental migrations live in `internal/htmlshare/sql/migrations/` and are recorded in the `schema_migrations` table.
+
 Required GitHub secrets:
 
 - `DEPLOY_HOST`: server host or IP.
@@ -106,7 +131,7 @@ GOOGLE_REDIRECT_URL=http://localhost:4545/auth/google/callback
 An agent can publish a short-lived HTML bundle without email, OAuth, or an API key. It must generate a stable `agent_id` for the current conversation/session and reuse it.
 
 ```bash
-curl -X POST http://localhost:4545/api/publish \
+curl -X POST http://localhost:4545/api/v1/publish \
   -H "content-type: application/json" \
   -d '{
     "mode": "fast",
@@ -127,7 +152,7 @@ Fast publications are public to anyone with the link and must expire within the 
 Use registered signup only when a human wants account ownership, analytics, recipients, domains, signed access, or longer-lived library control. An agent can start onboarding for that human with:
 
 ```bash
-curl -X POST http://localhost:4545/api/ai/signup \
+curl -X POST http://localhost:4545/api/v1/ai/signup \
   -H "content-type: application/json" \
   -d '{
     "email": "owner@example.com",
@@ -144,7 +169,7 @@ The human receives a confirmation email. New unconfirmed registrations are provi
 Agents without MCP can publish account-owned files with one POST using either a session cookie or an API key from the dashboard:
 
 ```bash
-curl -X POST http://localhost:4545/api/publish \
+curl -X POST http://localhost:4545/api/v1/publish \
   -H "authorization: Bearer hsk_..." \
   -H "content-type: application/json" \
   -d '{
@@ -184,7 +209,7 @@ Each request to a published file path under `/f/{slug}/...` creates an access lo
 Owners can read stats with:
 
 ```bash
-curl http://localhost:4545/api/library/{id-or-slug}/stats \
+curl http://localhost:4545/api/v1/library/{id-or-slug}/stats \
   -H "authorization: Bearer hsk_..."
 ```
 
@@ -195,7 +220,7 @@ The response includes `visits` and the raw `logs`.
 Owners can email a signed access token for legal proof:
 
 ```bash
-curl -X POST http://localhost:4545/api/library/{id-or-slug}/signed-access \
+curl -X POST http://localhost:4545/api/v1/library/{id-or-slug}/signed-access \
   -H "authorization: Bearer hsk_..." \
   -H "content-type: application/json" \
   -d '{"email":"reader@example.com","message":"Please open this signed link."}'
@@ -206,16 +231,16 @@ Opening the emailed link confirms the reader email, records a signed access proo
 Readers with access can comment on the whole page or on selected text. Published `index.html` pages receive a small injected widget that posts to:
 
 ```bash
-POST /api/public-comments/{slug}
+POST /api/v1/public-comments/{slug}
 ```
 
 Comment payloads support `body`, `scope` (`general` or `inline`), `anchor_text`, `anchor_selector`, and `parent_id`. Owners can list, reply, archive, and soft-delete comments through:
 
 ```bash
-GET  /api/library/{id-or-slug}/comments
-POST /api/library/{id-or-slug}/comments
-PATCH /api/comments/{comment-id}
-DELETE /api/comments/{comment-id}
+GET  /api/v1/library/{id-or-slug}/comments
+POST /api/v1/library/{id-or-slug}/comments
+PATCH /api/v1/comments/{comment-id}
+DELETE /api/v1/comments/{comment-id}
 ```
 
 ## Abuse Review
@@ -223,7 +248,7 @@ DELETE /api/comments/{comment-id}
 Anyone can submit an abuse notice:
 
 ```bash
-curl -X POST http://localhost:4545/api/abuse-reports \
+curl -X POST http://localhost:4545/api/v1/abuse-reports \
   -H "content-type: application/json" \
   -d '{"slug":"quarterly-file","reporter_email":"reader@example.com","reason":"phishing","details":"Asks for credentials."}'
 ```

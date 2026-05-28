@@ -34,6 +34,7 @@ type Server struct {
 const (
 	publicLoginEnabled = true
 	commentsEnabled    = false
+	apiVersion         = "v1"
 )
 
 func (s *Server) Routes() http.Handler {
@@ -44,17 +45,30 @@ func (s *Server) Routes() http.Handler {
 	})
 	mux.HandleFunc("/api", s.openapi)
 	mux.HandleFunc("/api/", s.apiIndex)
+	mux.HandleFunc("/api/v1", s.openapi)
+	mux.HandleFunc("/api/v1/", s.apiV1Index)
 	mux.HandleFunc("/api/ai/signup", s.aiSignup)
+	mux.HandleFunc("/api/v1/ai/signup", s.aiSignup)
 	mux.HandleFunc("/api/auth/config", s.authConfig)
+	mux.HandleFunc("/api/v1/auth/config", s.authConfig)
 	mux.HandleFunc("/api/session", s.session)
+	mux.HandleFunc("/api/v1/session", s.session)
 	mux.HandleFunc("/api/api-keys", s.apiKeys)
+	mux.HandleFunc("/api/v1/api-keys", s.apiKeys)
 	mux.HandleFunc("/api/publish", s.publish)
+	mux.HandleFunc("/api/v1/publish", s.publish)
 	mux.HandleFunc("/api/share", s.share)
+	mux.HandleFunc("/api/v1/share", s.share)
 	mux.HandleFunc("/api/library", s.library)
+	mux.HandleFunc("/api/v1/library", s.library)
 	mux.HandleFunc("/api/library/", s.libraryActions)
+	mux.HandleFunc("/api/v1/library/", s.libraryActions)
 	mux.HandleFunc("/api/public-comments/", s.publicPublicationComments)
+	mux.HandleFunc("/api/v1/public-comments/", s.publicPublicationComments)
 	mux.HandleFunc("/api/comments/", s.commentActions)
+	mux.HandleFunc("/api/v1/comments/", s.commentActions)
 	mux.HandleFunc("/api/abuse-reports", s.abuseReports)
+	mux.HandleFunc("/api/v1/abuse-reports", s.abuseReports)
 	mux.HandleFunc("/mcp", s.mcp)
 	mux.HandleFunc("/abuse", s.abusePage)
 	mux.HandleFunc("/auth/magic", s.magic)
@@ -178,15 +192,23 @@ func (s *Server) apiIndex(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+func (s *Server) apiV1Index(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v1/" || r.URL.Path == "/api/v1/openapi.json" {
+		s.openapi(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
 func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"openapi": "3.1.0",
 		"info": map[string]any{
 			"title":       "htmlshare API",
-			"version":     "1.0.0",
+			"version":     apiVersion,
 			"description": "AI-first API for publishing and sharing generated HTML pages.",
 		},
-		"servers": []map[string]string{{"url": s.AppURL}},
+		"servers": []map[string]string{{"url": s.AppURL + "/api/" + apiVersion}},
 		"components": map[string]any{
 			"securitySchemes": map[string]any{
 				"bearerAuth": map[string]string{"type": "http", "scheme": "bearer"},
@@ -239,7 +261,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		"paths": map[string]any{
-			"/api/publish": map[string]any{
+			"/publish": map[string]any{
 				"post": map[string]any{
 					"summary":     "Publish an HTML bundle",
 					"description": "Canonical agent endpoint. Use mode=fast with an agent_id for short-lived no-email publishing, or mode=registered with bearer/session auth for account-owned sharing.",
@@ -248,7 +270,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 					"responses":   openAPIResponses("201", "HTML published"),
 				},
 			},
-			"/api/share": map[string]any{
+			"/share": map[string]any{
 				"post": map[string]any{
 					"summary":     "Share an existing publication by email",
 					"description": "Creates magic links for recipients and sends email when email delivery is configured.",
@@ -257,13 +279,13 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 					"responses":   openAPIResponses("201", "Publication shared"),
 				},
 			},
-			"/api/ai/signup": map[string]any{
+			"/ai/signup": map[string]any{
 				"post": map[string]any{
 					"summary":   "Start registered-account automation signup with a magic link",
 					"responses": openAPIResponses("201", "Magic link created"),
 				},
 			},
-			"/api/api-keys": map[string]any{
+			"/api-keys": map[string]any{
 				"post": map[string]any{
 					"summary":     "Create an agent API key",
 					"description": "Requires a confirmed authenticated session. For a new email, /api/ai/signup returns a temporary hsk_... token and sends a confirmation email. For an existing confirmed email, /api/ai/signup emails a new token to the account owner instead of returning it.",
@@ -272,7 +294,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 					"responses":   openAPIResponses("201", "Agent key created"),
 				},
 			},
-			"/api/abuse-reports": map[string]any{
+			"/abuse-reports": map[string]any{
 				"post": map[string]any{
 					"summary":   "Submit abuse or illegal content notice",
 					"responses": openAPIResponses("201", "Abuse notice accepted"),
@@ -957,7 +979,7 @@ func (s *Server) libraryActions(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/library/"), "/")
+	parts := strings.Split(strings.TrimPrefix(trimAPIVersionPath(r.URL.Path), "/api/library/"), "/")
 	if len(parts) == 1 && r.Method == http.MethodPatch {
 		publication, ok := s.findPublicationOwned(parts[0], user.ID)
 		if !ok {
@@ -1158,7 +1180,7 @@ func (s *Server) publicPublicationComments(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "comments are disabled in this version", http.StatusGone)
 		return
 	}
-	slug := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/public-comments/"), "/")
+	slug := strings.Trim(strings.TrimPrefix(trimAPIVersionPath(r.URL.Path), "/api/public-comments/"), "/")
 	publication, ok := s.findPublicationBySlug(slug)
 	if !ok {
 		http.NotFound(w, r)
@@ -1201,7 +1223,7 @@ func (s *Server) commentActions(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	commentID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/comments/"), "/")
+	commentID := strings.Trim(strings.TrimPrefix(trimAPIVersionPath(r.URL.Path), "/api/comments/"), "/")
 	if commentID == "" {
 		http.NotFound(w, r)
 		return
@@ -2110,6 +2132,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func methodNotAllowed(w http.ResponseWriter) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func trimAPIVersionPath(path string) string {
+	if strings.HasPrefix(path, "/api/v1/") {
+		return "/api/" + strings.TrimPrefix(path, "/api/v1/")
+	}
+	if path == "/api/v1" {
+		return "/api"
+	}
+	return path
 }
 
 func validVisibility(value string) bool {
