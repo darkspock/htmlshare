@@ -102,6 +102,11 @@ type PublishDraft = {
   recipients: string;
   files: UploadedFile[];
 };
+type PublishComposerProps = {
+  draft: PublishDraft;
+  setDraft: React.Dispatch<React.SetStateAction<PublishDraft>>;
+  publishPublication: () => void;
+};
 type NavKey = "Library" | "History" | "Shared with me" | "Bookmarks" | "Recipients" | "Agent keys" | "Activity" | "Settings";
 const llmsHelpUrl = `${window.location.origin}/llms.txt`;
 
@@ -370,6 +375,16 @@ function App() {
     await refreshPublications();
   }
 
+  async function updateSelectedTitle(title: string) {
+    if (!selected) return;
+    await api(`/api/library/${selected.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title })
+    });
+    setNotice("File title updated.");
+    await refreshPublications();
+  }
+
   async function copyHelpLink() {
     await navigator.clipboard.writeText(llmsHelpUrl);
     setNotice(`Help link copied. Paste ${llmsHelpUrl} into your LLM and ask how to use htmlshare.`);
@@ -425,8 +440,6 @@ function App() {
                 statsByPublication={statsByPublication}
                 totalVisits={totalVisits}
                 onSelect={(publication) => setSelectedId(publication.id)}
-                draft={draft}
-                setDraft={setDraft}
                 publishPublication={publishPublication}
                 shareEmail={shareEmail}
                 setShareEmail={setShareEmail}
@@ -436,6 +449,7 @@ function App() {
                 sendSignedAccess={sendSignedAccess}
                 shares={sharesByPublication[selected.id] || []}
                 updateSelectedAccess={updateSelectedAccess}
+                updateSelectedTitle={updateSelectedTitle}
               />
             ) : (
               <EmptyLibrary draft={draft} setDraft={setDraft} publishPublication={publishPublication} />
@@ -579,8 +593,6 @@ function LibraryView(props: {
   statsByPublication: Record<string, Stats>;
   totalVisits: number;
   onSelect: (publication: Publication) => void;
-  draft: PublishDraft;
-  setDraft: React.Dispatch<React.SetStateAction<PublishDraft>>;
   publishPublication: () => void;
   shareEmail: string;
   setShareEmail: (value: string) => void;
@@ -590,6 +602,7 @@ function LibraryView(props: {
   sendSignedAccess: () => void;
   shares: Share[];
   updateSelectedAccess: (visibility: string) => void;
+  updateSelectedTitle: (title: string) => Promise<void>;
 }) {
   const {
     publications,
@@ -597,8 +610,6 @@ function LibraryView(props: {
     statsByPublication,
     totalVisits,
     onSelect,
-    draft,
-    setDraft,
     publishPublication,
     shareEmail,
     setShareEmail,
@@ -607,9 +618,24 @@ function LibraryView(props: {
     setSignedAccessEmail,
     sendSignedAccess,
     shares,
-    updateSelectedAccess
+    updateSelectedAccess,
+    updateSelectedTitle
   } = props;
   const selectedStats = statsByPublication[selected.id] || { visits: 0, logs: [] };
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(selected.title);
+
+  useEffect(() => {
+    setTitleDraft(selected.title);
+    setEditingTitle(false);
+  }, [selected.id, selected.title]);
+
+  async function saveTitle() {
+    if (!titleDraft.trim()) return;
+    await updateSelectedTitle(titleDraft.trim());
+    setEditingTitle(false);
+  }
+
   return (
     <div className="library-layout">
       <section className="library-main">
@@ -650,9 +676,25 @@ function LibraryView(props: {
       <aside className="publication-panel">
         <div className="panel-header">
           <p className="eyebrow">File</p>
-          <h2>{selected.title}</h2>
+          <div className="panel-title-row">
+            <h2>{selected.title}</h2>
+            <button type="button" onClick={() => setEditingTitle((current) => !current)}>
+              Edit
+            </button>
+          </div>
           <span>{selected.visibility} · {selected.files.length} files</span>
         </div>
+        {editingTitle && (
+          <label className="compact-field">
+            <span>Title</span>
+            <div>
+              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} />
+              <button onClick={saveTitle}>
+                <Check size={14} />
+              </button>
+            </div>
+          </label>
+        )}
         <div className="metric-grid">
           <Metric label="Visits" value={String(selectedStats.visits)} note="tracked requests" />
           <Metric label="Total reach" value={String(totalVisits)} note="all files" />
@@ -714,7 +756,6 @@ function LibraryView(props: {
           ))}
           {!selectedStats.signed_proofs?.length && <small>No signed access proofs yet.</small>}
         </div>
-        <PublishComposer draft={draft} setDraft={setDraft} publishPublication={publishPublication} />
       </aside>
     </div>
   );
@@ -779,7 +820,7 @@ function CommentInbox({
   );
 }
 
-function EmptyLibrary({ draft, setDraft, publishPublication }: Pick<React.ComponentProps<typeof LibraryView>, "draft" | "setDraft" | "publishPublication">) {
+function EmptyLibrary({ draft, setDraft, publishPublication }: PublishComposerProps) {
   return (
     <div className="empty-state">
       <p className="eyebrow">Library · empty</p>
@@ -832,7 +873,7 @@ function PublishComposer({
   draft,
   setDraft,
   publishPublication
-}: Pick<React.ComponentProps<typeof LibraryView>, "draft" | "setDraft" | "publishPublication">) {
+}: PublishComposerProps) {
   async function handleFileSelection(event: React.ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files || []);
     const files = await Promise.all(

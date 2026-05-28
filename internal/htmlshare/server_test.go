@@ -578,6 +578,15 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	if signedURL == "" {
 		t.Fatal("missing signed_url")
 	}
+	_ = store.ReadDB(func(db DB) error {
+		if len(db.Shares) != 1 {
+			t.Fatalf("shares after signed send = %d, want 1", len(db.Shares))
+		}
+		if db.Shares[0].Email != "reader@example.com" {
+			t.Fatalf("share email = %q, want reader@example.com", db.Shares[0].Email)
+		}
+		return nil
+	})
 
 	readerJar, err := cookiejar.New(nil)
 	if err != nil {
@@ -624,6 +633,9 @@ func TestSignedAccessRecordsProofWhileCommentsAreDisabled(t *testing.T) {
 	_ = store.ReadDB(func(db DB) error {
 		if len(db.SignedProofs) != 1 {
 			t.Fatalf("signed proofs = %d, want 1", len(db.SignedProofs))
+		}
+		if len(db.Shares) != 1 {
+			t.Fatalf("shares after signed open = %d, want 1", len(db.Shares))
 		}
 		if len(db.Comments) != 0 {
 			t.Fatalf("comments = %d, want 0", len(db.Comments))

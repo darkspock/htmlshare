@@ -1536,17 +1536,43 @@ func (s *Server) createSignedAccess(w http.ResponseWriter, r *http.Request, publ
 		http.Error(w, "valid email required", http.StatusBadRequest)
 		return
 	}
+	now := time.Now()
 	raw := "hsa_" + RandomToken(32)
 	token := SignedAccessToken{
 		ID:            NewID("sat"),
 		PublicationID: publication.ID,
 		Email:         email,
 		TokenHash:     HashToken(raw),
-		CreatedAt:     time.Now(),
-		ExpiresAt:     time.Now().Add(7 * 24 * time.Hour),
+		CreatedAt:     now,
+		ExpiresAt:     now.Add(7 * 24 * time.Hour),
 	}
 	if err := s.Store.WithDB(func(db *DB) error {
 		db.SignedTokens = append(db.SignedTokens, token)
+		userID := ""
+		for _, user := range db.Users {
+			if user.Email == email {
+				userID = user.ID
+				break
+			}
+		}
+		if userID == "" {
+			user := User{
+				ID:                   NewID("usr"),
+				Email:                email,
+				Provider:             "magic",
+				AutoProvisioned:      true,
+				ConfirmationDeadline: now.Add(24 * time.Hour),
+				CreatedAt:            now,
+			}
+			db.Users = append(db.Users, user)
+			userID = user.ID
+		}
+		for _, share := range db.Shares {
+			if share.PublicationID == publication.ID && share.Email == email {
+				return nil
+			}
+		}
+		db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: email, UserID: userID, CreatedAt: now})
 		return nil
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1946,7 +1972,18 @@ func (s *Server) signedAccess(w http.ResponseWriter, r *http.Request) {
 				for _, publication := range db.Publications {
 					if publication.ID == token.PublicationID {
 						publicationSlug = publication.Slug
-						db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: email, UserID: user.ID, CreatedAt: time.Now()})
+						hasShare := false
+						for shareIndex := range db.Shares {
+							share := &db.Shares[shareIndex]
+							if share.PublicationID == publication.ID && share.Email == email {
+								share.UserID = user.ID
+								hasShare = true
+								break
+							}
+						}
+						if !hasShare {
+							db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: email, UserID: user.ID, CreatedAt: time.Now()})
+						}
 						break
 					}
 				}
