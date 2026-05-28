@@ -145,11 +145,21 @@ Content-Type: application/json
   "visibility": "recipients",
   "ttl_seconds": 86400,
   "files": {
-    "index.html": "<!doctype html><html><body><h1>Private review file</h1></body></html>"
+    "index.html": "<!doctype html><html><body><h1>Restricted review file</h1><p>Open this file from the email link sent by htmlshare.</p></body></html>"
   },
   "share": {
-    "emails": ["extjmv@gmail.com"],
+    "emails": ["recipient@example.com"],
     "message": "Please review this file."
+  }
+}
+```
+
+Multiple recipients and domain allow-lists are also valid:
+
+```json
+{
+  "share": {
+    "emails": ["alice@example.com", "bob@example.com", "@example.org"]
   }
 }
 ```
