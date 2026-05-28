@@ -1250,6 +1250,17 @@ kbd {
   text-underline-offset: 4px;
 }
 
+.soft-table > .blank-card,
+.library-list > .blank-card {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 24px;
+  color: var(--charcoal-30);
+  white-space: normal;
+}
+
 .activity-list > div {
   grid-template-columns: 24px minmax(140px, 1fr) 120px minmax(100px, 160px) 72px 140px;
 }
