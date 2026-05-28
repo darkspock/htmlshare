@@ -283,7 +283,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			"/publish": map[string]any{
 				"post": map[string]any{
 					"summary":     "Publish an HTML bundle",
-					"description": "Canonical agent endpoint. Use mode=fast with an agent_id for short-lived no-email publishing, or mode=registered with bearer/session auth for account-owned sharing.",
+					"description": "Canonical agent endpoint. Use mode=fast with an agent_id for short-lived public or recipient-restricted publishing without bearer auth. Use mode=registered with bearer/session auth for account-owned sharing, dashboard control, signed access, or long-lived library storage.",
 					"security":    []map[string][]string{{}, {"bearerAuth": []string{}}, {"sessionCookie": []string{}}},
 					"requestBody": openAPIJSONBody("PublishRequest"),
 					"responses":   openAPIResponses("201", "HTML published"),
@@ -1123,17 +1123,35 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "fast publications must expire within "+limits.MaxTTL.String(), http.StatusBadRequest)
 		return
 	}
+	visibility := strings.ToLower(strings.TrimSpace(req.Visibility))
+	if visibility == "" {
+		visibility = "public"
+	}
+	if visibility != "public" && visibility != "recipients" {
+		http.Error(w, "fast mode supports visibility public or recipients", http.StatusBadRequest)
+		return
+	}
+	shareTargets, err := normalizeShareTargets(req.Share.Emails)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if visibility == "recipients" && len(shareTargets) == 0 {
+		http.Error(w, "share.emails required for fast recipient sharing", http.StatusBadRequest)
+		return
+	}
 	publication := Publication{
-		ID:         NewID("pub"),
-		AgentID:    agent.ID,
-		Mode:       "fast",
-		CreatedIP:  ip,
-		Title:      req.Title,
-		Slug:       Slugify(req.Title),
-		Visibility: "public",
-		ExpiresAt:  expiresAt,
-		CreatedAt:  now,
-		SizeBytes:  sizeBytes,
+		ID:                  NewID("pub"),
+		AgentID:             agent.ID,
+		Mode:                "fast",
+		CreatedIP:           ip,
+		Title:               req.Title,
+		Slug:                Slugify(req.Title),
+		Visibility:          visibility,
+		RequireRegistration: visibility == "recipients" || req.RequireRegistration,
+		ExpiresAt:           expiresAt,
+		CreatedAt:           now,
+		SizeBytes:           sizeBytes,
 	}
 	for name, content := range req.Files {
 		clean, err := s.Store.WritePublicationFile(publication.ID, name, []byte(content))
@@ -1149,11 +1167,20 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var shares []map[string]string
+	for _, target := range shareTargets {
+		link, err := s.sharePublication(publication, target, req.Share.Message)
+		if err == nil {
+			shares = append(shares, map[string]string{"email": target, "url": link})
+		}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         publication.ID,
 		"slug":       publication.Slug,
 		"url":        s.AppURL + "/f/" + publication.Slug + "/",
 		"mode":       publication.Mode,
+		"visibility": publication.Visibility,
+		"shares":     shares,
 		"expires_at": publication.ExpiresAt,
 	})
 }
@@ -1214,11 +1241,15 @@ func (s *Server) libraryActions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createShares(w http.ResponseWriter, publication Publication, emails []string, message string) {
 	var shares []map[string]string
-	for _, target := range emails {
-		normalized := strings.TrimSpace(strings.ToLower(target))
-		link, err := s.sharePublication(publication, normalized, message)
+	targets, err := normalizeShareTargets(emails)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, target := range targets {
+		link, err := s.sharePublication(publication, target, message)
 		if err == nil {
-			shares = append(shares, map[string]string{"email": normalized, "url": link})
+			shares = append(shares, map[string]string{"email": target, "url": link})
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"shares": shares})
@@ -1753,6 +1784,7 @@ func (s *Server) magic(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		var link MagicLink
 		var user User
+		var publication Publication
 		err := s.Store.WithDB(func(db *DB) error {
 			for _, candidate := range db.MagicLinks {
 				if candidate.TokenHash == hash && candidate.UsedAt.IsZero() && candidate.ExpiresAt.After(time.Now()) {
@@ -1766,10 +1798,21 @@ func (s *Server) magic(w http.ResponseWriter, r *http.Request) {
 			for _, candidate := range db.Users {
 				if candidate.ID == link.UserID {
 					user = candidate
-					return nil
+					break
 				}
 			}
-			return errors.New("user not found")
+			if user.ID == "" {
+				return errors.New("user not found")
+			}
+			if link.PublicationID != "" {
+				for _, candidate := range db.Publications {
+					if candidate.ID == link.PublicationID {
+						publication = candidate
+						break
+					}
+				}
+			}
+			return nil
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -1777,6 +1820,10 @@ func (s *Server) magic(w http.ResponseWriter, r *http.Request) {
 		}
 		if link.Purpose == "signup" {
 			_, _ = io.WriteString(w, confirmMagicHTML(token, user.Email))
+			return
+		}
+		if link.Purpose == "share" {
+			_, _ = io.WriteString(w, confirmShareHTML(token, user.Email, publication.Title))
 			return
 		}
 	}
@@ -2462,6 +2509,29 @@ func validRecipientTarget(value string) bool {
 	return len(parts) == 2 && parts[0] != "" && strings.Contains(parts[1], ".") && !strings.ContainsAny(value, " /\\")
 }
 
+func normalizeShareTargets(values []string) ([]string, error) {
+	if len(values) > 50 {
+		return nil, errors.New("too many recipients")
+	}
+	seen := map[string]bool{}
+	var targets []string
+	for _, value := range values {
+		target := strings.ToLower(strings.TrimSpace(value))
+		if target == "" {
+			continue
+		}
+		if !validRecipientTarget(target) {
+			return nil, errors.New("valid recipient email or @domain required: " + target)
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	return targets, nil
+}
+
 func domainShareMatches(shareTarget, email string) bool {
 	shareTarget = strings.ToLower(strings.TrimSpace(shareTarget))
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -2728,6 +2798,39 @@ func confirmMagicHTML(token, email string) string {
     <p>This confirms <strong>` + htmlEscape(email) + `</strong> and extends the temporary agent token from 24 hours to 1 year.</p>
     <form method="post" action="/auth/magic?token=` + url.QueryEscape(token) + `">
       <button type="submit">Confirm and activate</button>
+    </form>
+  </main>
+</body>
+</html>`
+}
+
+func confirmShareHTML(token, email, title string) string {
+	if title == "" {
+		title = "shared file"
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open shared file · htmlshare</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#242624;color:#fefaf6}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:#f5f2ed;background-image:linear-gradient(rgba(36,38,36,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(36,38,36,.08) 1px,transparent 1px);background-size:72px 72px}
+    main{width:min(100%,560px);background:#242624;border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 70px rgba(0,0,0,.18);padding:36px}.brand-page{display:inline-flex;align-items:center;gap:10px;color:#fefaf6;text-decoration:none}.brand-page img{width:58px;height:34px;object-fit:contain}.brand-page b{font-size:18px;letter-spacing:-.03em}.brand-page span{color:#b8bab8;font-weight:400}
+    h1{margin:28px 0 10px;font-size:42px;line-height:.96;letter-spacing:-.03em}p{color:#b8bab8;line-height:1.55}.eyebrow{margin:24px 0 0;color:#b8a8d8;font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase}
+    button{width:100%;min-height:52px;margin-top:18px;border:0;border-radius:999px;background:#fefaf6;color:#242624;padding:0 22px;font:800 15px/1 inherit;cursor:pointer}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="brand-page" href="/"><img src="/logo.png" alt=""><b>html<span>share</span></b></a>
+    <p class="eyebrow">Email access</p>
+    <h1>Open this shared file.</h1>
+    <p>This confirms <strong>` + htmlEscape(email) + `</strong> and opens <strong>` + htmlEscape(title) + `</strong>. The token is only consumed when you press the button.</p>
+    <form method="post" action="/auth/magic?token=` + url.QueryEscape(token) + `">
+      <button type="submit">Open file</button>
     </form>
   </main>
 </body>

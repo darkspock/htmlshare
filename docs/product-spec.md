@@ -102,6 +102,8 @@ The fast AI flow and the registered control flow are separate product modes. Do 
 
 The API should make the mode explicit so agents know whether they are creating a short-lived anonymous publication or a controlled account-owned publication.
 
+Fast AI publishing can also support short-lived recipient-restricted sharing. If the user asks for a temporary file visible only to specific email recipients, the agent should be able to call `mode: "fast"` with `visibility: "recipients"` and `share.emails`; htmlshare sends magic links to those recipients and denies the public URL until the recipient proves email control. This must remain temporary and rate-limited. Registered mode is still required for account ownership, dashboard management, long-lived library storage, signed legal proof, broad analytics, and reusable agent keys.
+
 ## Implementation Plan
 
 1. Replace the current whole-state persistence layer with SQLC-backed incremental queries and transactions.

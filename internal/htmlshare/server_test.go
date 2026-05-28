@@ -195,6 +195,114 @@ func TestFastPublishDoesNotRequireEmailOrAPIKey(t *testing.T) {
 	})
 }
 
+func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+		Mailer:        Mailer{DataDir: store.DataDir(), From: "test@example.com"},
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	publishResp := postJSON(t, ts.URL+"/api/v1/publish", "", map[string]any{
+		"mode":        "fast",
+		"agent_id":    "fast-recipient-session",
+		"agent_name":  "codex",
+		"title":       "Recipient-only fast file",
+		"visibility":  "recipients",
+		"ttl_seconds": 3600,
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>Recipient-only fast file</h1></body></html>",
+		},
+		"share": map[string]any{
+			"emails":  []string{"reader@example.com"},
+			"message": "Please review this file.",
+		},
+	})
+	if publishResp.StatusCode != http.StatusCreated {
+		t.Fatalf("fast recipient publish status = %d", publishResp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, publishResp, &body)
+	if body["visibility"] != "recipients" {
+		t.Fatalf("visibility = %v, want recipients", body["visibility"])
+	}
+	publicURL := body["url"].(string)
+	shares := body["shares"].([]any)
+	if len(shares) != 1 {
+		t.Fatalf("shares = %d, want 1", len(shares))
+	}
+
+	anonymousResp, err := http.Get(publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = anonymousResp.Body.Close()
+	if anonymousResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("anonymous status = %d, want %d", anonymousResp.StatusCode, http.StatusForbidden)
+	}
+
+	magicURL := latestOutboxLink(t, store)
+	magicGetResp, err := http.Get(magicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(magicGetResp.Body)
+	_ = magicGetResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if magicGetResp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Open file") {
+		t.Fatalf("magic GET status/body = %d %q", magicGetResp.StatusCode, string(raw))
+	}
+
+	anonymousAgainResp, err := http.Get(publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = anonymousAgainResp.Body.Close()
+	if anonymousAgainResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("anonymous after GET status = %d, want %d", anonymousAgainResp.StatusCode, http.StatusForbidden)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	openResp, err := client.Post(magicURL, "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = io.ReadAll(openResp.Body)
+	_ = openResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openResp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Recipient-only fast file") {
+		t.Fatalf("magic POST final status/body = %d %q", openResp.StatusCode, string(raw))
+	}
+
+	viewResp, err := client.Get(publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = io.ReadAll(viewResp.Body)
+	_ = viewResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viewResp.StatusCode != http.StatusOK || !strings.Contains(string(raw), "Recipient-only fast file") {
+		t.Fatalf("recipient view status/body = %d %q", viewResp.StatusCode, string(raw))
+	}
+}
+
 func TestAPIV1PublishAlias(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

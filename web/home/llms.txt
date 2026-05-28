@@ -73,6 +73,8 @@ Use this by default when the user just needs a quick review link.
 - The publication must expire quickly.
 - The assistant must send a stable `agent_id` and reuse it during the current session.
 - htmlshare rate-limits by IP and `agent_id`.
+- Supports public links and short-lived recipient-restricted links.
+- For recipient-restricted fast links, send `visibility: "recipients"` with `share.emails`. htmlshare emails each recipient a magic link. The public URL is not readable until the recipient proves control of the email.
 
 ### Registered publish
 
@@ -121,8 +123,63 @@ Rules for fast publish:
 - Include CSS, JS, SVG, JSON or other static files as extra keys in `files`.
 - Generate a random stable `agent_id` once per conversation/session and reuse it.
 - Store the `agent_id` in the conversation memory or local session state when available.
+- Use `visibility: "public"` or omit `visibility` for a normal temporary link.
+- Use `visibility: "recipients"` plus `share.emails` when the user says only specific people should read it. This does not require an `hsk_...` token.
 - Do not publish secrets, credentials, private keys, internal tokens, or sensitive personal data.
 - Keep `ttl_seconds` under one week. Shorter is better for temporary reports.
+
+## Fast recipient-restricted publish
+
+Use this when the user wants a short-lived file visible only to one or more email recipients, but does not need account ownership, dashboard analytics, reusable agent keys, or long-lived registered storage.
+
+```http
+POST https://share.metricauno.com/api/v1/publish
+Content-Type: application/json
+
+{
+  "mode": "fast",
+  "agent_id": "stable-id-generated-by-the-assistant-for-this-session",
+  "agent_name": "claude",
+  "title": "Private review file",
+  "visibility": "recipients",
+  "ttl_seconds": 86400,
+  "files": {
+    "index.html": "<!doctype html><html><body><h1>Private review file</h1></body></html>"
+  },
+  "share": {
+    "emails": ["extjmv@gmail.com"],
+    "message": "Please review this file."
+  }
+}
+```
+
+Successful response includes the publication URL and recipient share URLs:
+
+```json
+{
+  "id": "pub_...",
+  "slug": "private-review-file-...",
+  "url": "https://share.metricauno.com/f/private-review-file-.../",
+  "mode": "fast",
+  "visibility": "recipients",
+  "shares": [
+    {
+      "email": "extjmv@gmail.com",
+      "url": "https://share.metricauno.com/auth/magic?token=hml_..."
+    }
+  ],
+  "expires_at": "2026-05-29T10:00:00Z"
+}
+```
+
+Important behavior:
+
+- Do not ask the user for an `hsk_...` token only because they requested a short-lived recipient-only share.
+- The recipient gets an email link.
+- The email link opens a confirmation page with a button; crawler or Gmail prefetch should not consume it.
+- After confirmation, htmlshare sets a session and redirects the recipient to the file.
+- Anyone else opening the public URL without a matching confirmed session gets access denied.
+- Use registered mode only if the user asks for account ownership, dashboard management, longer-lived storage, signed legal proof, domain allow-lists, or reusable automation keys.
 
 ## Registered account setup
 
