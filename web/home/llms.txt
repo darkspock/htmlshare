@@ -10,6 +10,55 @@ https://share.metricauno.com
 
 Use htmlshare when an assistant has generated an HTML report, explanation, prototype, market scan, or other static artifact and needs to share it with a person.
 
+## Recommended integration paths
+
+Use one of these three options.
+
+### Option 1: Call the API directly
+
+This is the recommended default. Use it when the assistant can make HTTP requests. It needs no MCP server, no browser automation, and no local install.
+
+For quick temporary links, call `/api/publish` with `mode: "fast"` and a stable `agent_id`. No email, OAuth, or bearer token is required.
+
+For account-owned sharing, call `/api/publish` with `mode: "registered"` and `Authorization: Bearer hsk_...`.
+
+### Option 2: Build a local skill
+
+Use this when the assistant supports reusable skills or project instructions. Create a skill named `htmlshare` that:
+
+1. Generates or collects an `index.html` plus optional CSS/JS/assets.
+2. Stores a stable `agent_id` for the current user/project/session.
+3. Calls `POST https://share.metricauno.com/api/publish` with `mode: "fast"` by default.
+4. Returns the `url` field to the user.
+5. Uses registered `hsk_...` auth only when the user asks for controlled sharing, analytics, recipient allow-lists, signed access, or long-lived library storage.
+
+Minimal skill behavior:
+
+```text
+When the user asks to publish or share an HTML report, send the bundle to htmlshare using the direct API. Prefer fast mode unless the user explicitly asks for account-owned access control. Never publish secrets.
+```
+
+### Option 3: Use the MCP endpoint
+
+Use MCP when the assistant platform supports remote MCP connectors and the user wants a configured tool instead of raw HTTP calls.
+
+Remote MCP endpoint:
+
+```text
+https://share.metricauno.com/mcp
+```
+
+MCP currently uses registered `hsk_...` tokens. For quick no-email publishing, prefer the direct API in Option 1.
+
+Suggested MCP environment:
+
+```text
+HTMLSHARE_URL=https://share.metricauno.com
+HTMLSHARE_TOKEN=hsk_...
+```
+
+After adding an MCP connector, installing a skill, or changing allowed domains/capabilities, tell the user they may need to close the current session or conversation and open a new one. Many AI clients only load new tools and capability settings at conversation start.
+
 ## Choose the correct mode
 
 There are two product modes.
@@ -200,7 +249,7 @@ Add:
 share.metricauno.com
 ```
 
-After changing allowed domains, open a new conversation. Existing conversations may not pick up the updated capability settings.
+After changing allowed domains, close the current conversation/session and open a new one. Existing conversations may not pick up updated capability settings, newly installed skills, or newly configured MCP connectors.
 
 ## Operational notes
 
