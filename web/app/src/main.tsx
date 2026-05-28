@@ -167,6 +167,13 @@ function App() {
     }
   }, [session.user]);
 
+  useEffect(() => {
+    if (selected) {
+      void loadStats(selected);
+      void loadShares(selected);
+    }
+  }, [selected?.id]);
+
   async function refreshSession() {
     const data = await api<Session>("/api/session");
     setSession(data);
@@ -699,6 +706,13 @@ function LibraryView(props: {
             <span key={share.id}>{share.email}</span>
           ))}
           {!shares.length && <small>No recipients shared yet.</small>}
+        </div>
+        <div className="mini-list">
+          <p className="eyebrow">Signed proofs · {selectedStats.signed_proofs?.length || 0}</p>
+          {selectedStats.signed_proofs?.slice(0, 4).map((proof) => (
+            <span key={proof.id}>{proof.email} · {formatDate(proof.created_at)}</span>
+          ))}
+          {!selectedStats.signed_proofs?.length && <small>No signed access proofs yet.</small>}
         </div>
         <PublishComposer draft={draft} setDraft={setDraft} publishPublication={publishPublication} />
       </aside>
