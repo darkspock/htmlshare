@@ -40,20 +40,41 @@ CREATE TABLE IF NOT EXISTS api_keys (
   last_used_at timestamptz
 );
 
+CREATE TABLE IF NOT EXISTS agents (
+  id text PRIMARY KEY,
+  external_id_hash text NOT NULL UNIQUE,
+  name text NOT NULL DEFAULT '',
+  first_ip text NOT NULL DEFAULT '',
+  last_ip text NOT NULL DEFAULT '',
+  storage_bytes bigint NOT NULL DEFAULT 0,
+  blocked_at timestamptz,
+  blocked_reason text,
+  created_at timestamptz NOT NULL,
+  last_seen_at timestamptz NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS publications (
   id text PRIMARY KEY,
-  owner_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  owner_id text REFERENCES users(id) ON DELETE CASCADE,
+  agent_id text REFERENCES agents(id) ON DELETE SET NULL,
+  mode text NOT NULL DEFAULT 'registered',
   created_ip text,
   title text NOT NULL,
   slug text NOT NULL UNIQUE,
   visibility text NOT NULL,
   require_registration boolean NOT NULL DEFAULT false,
   files text[] NOT NULL DEFAULT '{}',
+  size_bytes bigint NOT NULL DEFAULT 0,
   blocked_at timestamptz,
   blocked_reason text,
   expires_at timestamptz,
   created_at timestamptz NOT NULL
 );
+
+ALTER TABLE publications ALTER COLUMN owner_id DROP NOT NULL;
+ALTER TABLE publications ADD COLUMN IF NOT EXISTS agent_id text REFERENCES agents(id) ON DELETE SET NULL;
+ALTER TABLE publications ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'registered';
+ALTER TABLE publications ADD COLUMN IF NOT EXISTS size_bytes bigint NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS shares (
   id text PRIMARY KEY,

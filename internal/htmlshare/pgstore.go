@@ -88,6 +88,25 @@ func (s *Store) loadPostgres() error {
 		})
 	}
 
+	agents, err := q.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range agents {
+		next.Agents = append(next.Agents, Agent{
+			ID:             item.ID,
+			ExternalIDHash: item.ExternalIDHash,
+			Name:           item.Name,
+			FirstIP:        item.FirstIp,
+			LastIP:         item.LastIp,
+			StorageBytes:   item.StorageBytes,
+			BlockedAt:      nullTimeValue(item.BlockedAt),
+			BlockedReason:  item.BlockedReason.String,
+			CreatedAt:      item.CreatedAt,
+			LastSeenAt:     item.LastSeenAt,
+		})
+	}
+
 	publications, err := q.ListPublications(ctx)
 	if err != nil {
 		return err
@@ -95,13 +114,16 @@ func (s *Store) loadPostgres() error {
 	for _, item := range publications {
 		next.Publications = append(next.Publications, Publication{
 			ID:                  item.ID,
-			OwnerID:             item.OwnerID,
+			OwnerID:             item.OwnerID.String,
+			AgentID:             item.AgentID.String,
+			Mode:                item.Mode,
 			CreatedIP:           item.CreatedIp.String,
 			Title:               item.Title,
 			Slug:                item.Slug,
 			Visibility:          item.Visibility,
 			RequireRegistration: item.RequireRegistration,
 			Files:               item.Files,
+			SizeBytes:           item.SizeBytes,
 			BlockedAt:           nullTimeValue(item.BlockedAt),
 			BlockedReason:       item.BlockedReason.String,
 			ExpiresAt:           nullTimeValue(item.ExpiresAt),
@@ -288,16 +310,39 @@ func (s *Store) savePostgres() error {
 			return err
 		}
 	}
+	for _, item := range s.db.Agents {
+		if _, err := q.UpsertAgent(ctx, state.UpsertAgentParams{
+			ID:             item.ID,
+			ExternalIDHash: item.ExternalIDHash,
+			Name:           item.Name,
+			FirstIp:        item.FirstIP,
+			LastIp:         item.LastIP,
+			StorageBytes:   item.StorageBytes,
+			BlockedAt:      nullTime(item.BlockedAt),
+			BlockedReason:  nullString(item.BlockedReason),
+			CreatedAt:      item.CreatedAt,
+			LastSeenAt:     item.LastSeenAt,
+		}); err != nil {
+			return err
+		}
+	}
 	for _, item := range s.db.Publications {
+		mode := item.Mode
+		if mode == "" {
+			mode = "registered"
+		}
 		if err := q.InsertPublication(ctx, state.InsertPublicationParams{
 			ID:                  item.ID,
-			OwnerID:             item.OwnerID,
+			OwnerID:             nullString(item.OwnerID),
+			AgentID:             nullString(item.AgentID),
+			Mode:                mode,
 			CreatedIp:           nullString(item.CreatedIP),
 			Title:               item.Title,
 			Slug:                item.Slug,
 			Visibility:          item.Visibility,
 			RequireRegistration: item.RequireRegistration,
 			Files:               item.Files,
+			SizeBytes:           item.SizeBytes,
 			BlockedAt:           nullTime(item.BlockedAt),
 			BlockedReason:       nullString(item.BlockedReason),
 			ExpiresAt:           nullTime(item.ExpiresAt),

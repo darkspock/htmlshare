@@ -132,6 +132,69 @@ func TestAutomationSignupKeyAndPublishFlow(t *testing.T) {
 	}
 }
 
+func TestFastPublishDoesNotRequireEmailOrAPIKey(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Store:         store,
+		AppURL:        "http://example.test",
+		SessionSecret: "test-secret",
+	}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	publishResp := postJSON(t, ts.URL+"/api/publish", "", map[string]any{
+		"mode":        "fast",
+		"agent_id":    "codex-session-12345",
+		"agent_name":  "codex",
+		"title":       "Fast AI file",
+		"ttl_seconds": 3600,
+		"files": map[string]string{
+			"index.html": "<!doctype html><html><body><h1>Fast AI file</h1></body></html>",
+			"style.css":  "body{font-family:system-ui}",
+		},
+	})
+	if publishResp.StatusCode != http.StatusCreated {
+		t.Fatalf("fast publish status = %d", publishResp.StatusCode)
+	}
+	var body map[string]any
+	decode(t, publishResp, &body)
+	if body["mode"] != "fast" {
+		t.Fatalf("mode = %v, want fast", body["mode"])
+	}
+	url, _ := body["url"].(string)
+	if url == "" {
+		t.Fatal("missing fast publication url")
+	}
+	viewResp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(viewResp.Body)
+	_ = viewResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viewResp.StatusCode != http.StatusOK {
+		t.Fatalf("view status = %d", viewResp.StatusCode)
+	}
+	if !strings.Contains(string(raw), "Fast AI file") {
+		t.Fatalf("unexpected body %q", string(raw))
+	}
+	_ = store.ReadDB(func(db DB) error {
+		if len(db.Agents) != 1 {
+			t.Fatalf("agents = %d, want 1", len(db.Agents))
+		}
+		if len(db.Publications) != 1 || db.Publications[0].OwnerID != "" || db.Publications[0].Mode != "fast" {
+			t.Fatalf("unexpected publication: %+v", db.Publications)
+		}
+		return nil
+	})
+}
+
 func TestExpiredAutomaticRegistrationDeletesOwnedContent(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

@@ -101,9 +101,30 @@ GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URL=http://localhost:4545/auth/google/callback
 ```
 
-## AI-first Signup
+## Fast AI Publish
 
-An agent can start onboarding for a human with one unauthenticated call:
+An agent can publish a short-lived HTML bundle without email, OAuth, or an API key. It must generate a stable `agent_id` for the current conversation/session and reuse it.
+
+```bash
+curl -X POST http://localhost:4545/api/publish \
+  -H "content-type: application/json" \
+  -d '{
+    "mode": "fast",
+    "agent_id": "claude-session-unique-id",
+    "agent_name": "claude",
+    "title": "Quick File",
+    "ttl_seconds": 86400,
+    "files": {
+      "index.html": "<!doctype html><html><body><h1>Quick File</h1></body></html>"
+    }
+  }'
+```
+
+Fast publications are public to anyone with the link and must expire within the configured maximum TTL.
+
+## Registered Automation Signup
+
+Use registered signup only when a human wants account ownership, analytics, recipients, domains, signed access, or longer-lived library control. An agent can start onboarding for that human with:
 
 ```bash
 curl -X POST http://localhost:4545/api/ai/signup \
@@ -112,23 +133,22 @@ curl -X POST http://localhost:4545/api/ai/signup \
     "email": "owner@example.com",
     "name": "Owner",
     "agent": "claude",
-    "intent": "publish-html-files"
+    "intent": "account-owned-html-publishing"
   }'
 ```
 
-The human receives a magic link. In local development the response also includes `dev_magic_url`, and the same link is written to `data/outbox.jsonl`.
-
-Automatic signups are provisional. The email must be confirmed through the magic link within 24 hours. If it is not confirmed, the user, sessions, API keys, owned publications, shares, magic links, and access logs are deleted.
+The human receives a confirmation email. New unconfirmed registrations are provisional for 24 hours. If the email already belongs to a confirmed account, the API does not return a token to the agent; the account owner receives it by email or provides an existing `hsk_...` key.
 
 ## Simple Publish Protocol
 
-Agents without MCP can publish with one POST using either a session cookie or an API key from the dashboard:
+Agents without MCP can publish account-owned files with one POST using either a session cookie or an API key from the dashboard:
 
 ```bash
 curl -X POST http://localhost:4545/api/publish \
   -H "authorization: Bearer hsk_..." \
   -H "content-type: application/json" \
   -d '{
+    "mode": "registered",
     "title": "Quarterly File",
     "visibility": "recipients",
     "require_registration": true,
@@ -146,9 +166,8 @@ curl -X POST http://localhost:4545/api/publish \
 Visibility values:
 
 - `private`: only the owner.
-- `magic`: anyone with a share magic link.
-- `recipients`: invited emails only.
-- `public`: public URL.
+- `recipients`: invited emails or allowed domains.
+- `public`: anyone with the link.
 
 ## Access Logs
 

@@ -14,11 +14,125 @@ import (
 )
 
 const clearAll = `-- name: ClearAll :exec
-TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, api_keys, magic_links, sessions, users
+TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users
 `
 
 func (q *Queries) ClearAll(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, clearAll)
+	return err
+}
+
+const countFastPublicationsByAgentSince = `-- name: CountFastPublicationsByAgentSince :one
+SELECT count(*) FROM publications
+WHERE mode = 'fast' AND agent_id = $1 AND created_at >= $2
+`
+
+type CountFastPublicationsByAgentSinceParams struct {
+	AgentID   sql.NullString
+	CreatedAt time.Time
+}
+
+func (q *Queries) CountFastPublicationsByAgentSince(ctx context.Context, arg CountFastPublicationsByAgentSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFastPublicationsByAgentSince, arg.AgentID, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countFastPublicationsByIPSince = `-- name: CountFastPublicationsByIPSince :one
+SELECT count(*) FROM publications
+WHERE mode = 'fast' AND created_ip = $1 AND created_at >= $2
+`
+
+type CountFastPublicationsByIPSinceParams struct {
+	CreatedIp sql.NullString
+	CreatedAt time.Time
+}
+
+func (q *Queries) CountFastPublicationsByIPSince(ctx context.Context, arg CountFastPublicationsByIPSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFastPublicationsByIPSince, arg.CreatedIp, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
+SELECT id, user_id, name, token_prefix, token_hash, created_at, expires_at, last_used_at FROM api_keys WHERE token_hash = $1 LIMIT 1
+`
+
+func (q *Queries) GetAPIKeyByHash(ctx context.Context, tokenHash string) (ApiKey, error) {
+	row := q.db.QueryRowContext(ctx, getAPIKeyByHash, tokenHash)
+	var i ApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.TokenHash,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, email, name, provider, password_hash, auto_provisioned, confirmation_deadline, email_confirmed_at, created_at FROM users WHERE email = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.Provider,
+		&i.PasswordHash,
+		&i.AutoProvisioned,
+		&i.ConfirmationDeadline,
+		&i.EmailConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserByID = `-- name: GetUserByID :one
+SELECT id, email, name, provider, password_hash, auto_provisioned, confirmation_deadline, email_confirmed_at, created_at FROM users WHERE id = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.Provider,
+		&i.PasswordHash,
+		&i.AutoProvisioned,
+		&i.ConfirmationDeadline,
+		&i.EmailConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const incrementAgentStorage = `-- name: IncrementAgentStorage :exec
+UPDATE agents
+SET storage_bytes = storage_bytes + $2,
+    last_seen_at = $3
+WHERE id = $1
+`
+
+type IncrementAgentStorageParams struct {
+	ID           string
+	StorageBytes int64
+	LastSeenAt   time.Time
+}
+
+func (q *Queries) IncrementAgentStorage(ctx context.Context, arg IncrementAgentStorageParams) error {
+	_, err := q.db.ExecContext(ctx, incrementAgentStorage, arg.ID, arg.StorageBytes, arg.LastSeenAt)
 	return err
 }
 
@@ -229,19 +343,22 @@ func (q *Queries) InsertMagicLink(ctx context.Context, arg InsertMagicLinkParams
 }
 
 const insertPublication = `-- name: InsertPublication :exec
-INSERT INTO publications (id, owner_id, created_ip, title, slug, visibility, require_registration, files, blocked_at, blocked_reason, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+INSERT INTO publications (id, owner_id, agent_id, mode, created_ip, title, slug, visibility, require_registration, files, size_bytes, blocked_at, blocked_reason, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 `
 
 type InsertPublicationParams struct {
 	ID                  string
-	OwnerID             string
+	OwnerID             sql.NullString
+	AgentID             sql.NullString
+	Mode                string
 	CreatedIp           sql.NullString
 	Title               string
 	Slug                string
 	Visibility          string
 	RequireRegistration bool
 	Files               []string
+	SizeBytes           int64
 	BlockedAt           sql.NullTime
 	BlockedReason       sql.NullString
 	ExpiresAt           sql.NullTime
@@ -252,12 +369,15 @@ func (q *Queries) InsertPublication(ctx context.Context, arg InsertPublicationPa
 	_, err := q.db.ExecContext(ctx, insertPublication,
 		arg.ID,
 		arg.OwnerID,
+		arg.AgentID,
+		arg.Mode,
 		arg.CreatedIp,
 		arg.Title,
 		arg.Slug,
 		arg.Visibility,
 		arg.RequireRegistration,
 		pq.Array(arg.Files),
+		arg.SizeBytes,
 		arg.BlockedAt,
 		arg.BlockedReason,
 		arg.ExpiresAt,
@@ -552,6 +672,44 @@ func (q *Queries) ListAccessLogs(ctx context.Context) ([]AccessLog, error) {
 	return items, nil
 }
 
+const listAgents = `-- name: ListAgents :many
+SELECT id, external_id_hash, name, first_ip, last_ip, storage_bytes, blocked_at, blocked_reason, created_at, last_seen_at FROM agents ORDER BY created_at, id
+`
+
+func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
+	rows, err := q.db.QueryContext(ctx, listAgents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Agent
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExternalIDHash,
+			&i.Name,
+			&i.FirstIp,
+			&i.LastIp,
+			&i.StorageBytes,
+			&i.BlockedAt,
+			&i.BlockedReason,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBans = `-- name: ListBans :many
 SELECT id, user_id, email, ip, reason, created_at, expires_at FROM bans ORDER BY created_at, id
 `
@@ -666,7 +824,7 @@ func (q *Queries) ListMagicLinks(ctx context.Context) ([]MagicLink, error) {
 }
 
 const listPublications = `-- name: ListPublications :many
-SELECT id, owner_id, created_ip, title, slug, visibility, require_registration, files, blocked_at, blocked_reason, expires_at, created_at FROM publications ORDER BY created_at, id
+SELECT id, owner_id, agent_id, mode, created_ip, title, slug, visibility, require_registration, files, size_bytes, blocked_at, blocked_reason, expires_at, created_at FROM publications ORDER BY created_at, id
 `
 
 func (q *Queries) ListPublications(ctx context.Context) ([]Publication, error) {
@@ -681,12 +839,15 @@ func (q *Queries) ListPublications(ctx context.Context) ([]Publication, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerID,
+			&i.AgentID,
+			&i.Mode,
 			&i.CreatedIp,
 			&i.Title,
 			&i.Slug,
 			&i.Visibility,
 			&i.RequireRegistration,
 			pq.Array(&i.Files),
+			&i.SizeBytes,
 			&i.BlockedAt,
 			&i.BlockedReason,
 			&i.ExpiresAt,
@@ -914,4 +1075,104 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const sumFastStorageByAgent = `-- name: SumFastStorageByAgent :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM publications
+WHERE mode = 'fast' AND agent_id = $1 AND (expires_at IS NULL OR expires_at > $2)
+`
+
+type SumFastStorageByAgentParams struct {
+	AgentID   sql.NullString
+	ExpiresAt sql.NullTime
+}
+
+func (q *Queries) SumFastStorageByAgent(ctx context.Context, arg SumFastStorageByAgentParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, sumFastStorageByAgent, arg.AgentID, arg.ExpiresAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const sumFastStorageByIP = `-- name: SumFastStorageByIP :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM publications
+WHERE mode = 'fast' AND created_ip = $1 AND (expires_at IS NULL OR expires_at > $2)
+`
+
+type SumFastStorageByIPParams struct {
+	CreatedIp sql.NullString
+	ExpiresAt sql.NullTime
+}
+
+func (q *Queries) SumFastStorageByIP(ctx context.Context, arg SumFastStorageByIPParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, sumFastStorageByIP, arg.CreatedIp, arg.ExpiresAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const updateAPIKeyLastUsed = `-- name: UpdateAPIKeyLastUsed :exec
+UPDATE api_keys SET last_used_at = $2 WHERE id = $1
+`
+
+type UpdateAPIKeyLastUsedParams struct {
+	ID         string
+	LastUsedAt sql.NullTime
+}
+
+func (q *Queries) UpdateAPIKeyLastUsed(ctx context.Context, arg UpdateAPIKeyLastUsedParams) error {
+	_, err := q.db.ExecContext(ctx, updateAPIKeyLastUsed, arg.ID, arg.LastUsedAt)
+	return err
+}
+
+const upsertAgent = `-- name: UpsertAgent :one
+INSERT INTO agents (id, external_id_hash, name, first_ip, last_ip, storage_bytes, blocked_at, blocked_reason, created_at, last_seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (external_id_hash) DO UPDATE
+SET name = COALESCE(NULLIF(EXCLUDED.name, ''), agents.name),
+    last_ip = EXCLUDED.last_ip,
+    last_seen_at = EXCLUDED.last_seen_at
+RETURNING id, external_id_hash, name, first_ip, last_ip, storage_bytes, blocked_at, blocked_reason, created_at, last_seen_at
+`
+
+type UpsertAgentParams struct {
+	ID             string
+	ExternalIDHash string
+	Name           string
+	FirstIp        string
+	LastIp         string
+	StorageBytes   int64
+	BlockedAt      sql.NullTime
+	BlockedReason  sql.NullString
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
+}
+
+func (q *Queries) UpsertAgent(ctx context.Context, arg UpsertAgentParams) (Agent, error) {
+	row := q.db.QueryRowContext(ctx, upsertAgent,
+		arg.ID,
+		arg.ExternalIDHash,
+		arg.Name,
+		arg.FirstIp,
+		arg.LastIp,
+		arg.StorageBytes,
+		arg.BlockedAt,
+		arg.BlockedReason,
+		arg.CreatedAt,
+		arg.LastSeenAt,
+	)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.ExternalIDHash,
+		&i.Name,
+		&i.FirstIp,
+		&i.LastIp,
+		&i.StorageBytes,
+		&i.BlockedAt,
+		&i.BlockedReason,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+	)
+	return i, err
 }

@@ -48,15 +48,31 @@ type APIKey struct {
 	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
 }
 
+type Agent struct {
+	ID             string    `json:"id"`
+	ExternalIDHash string    `json:"external_id_hash"`
+	Name           string    `json:"name,omitempty"`
+	FirstIP        string    `json:"first_ip,omitempty"`
+	LastIP         string    `json:"last_ip,omitempty"`
+	StorageBytes   int64     `json:"storage_bytes"`
+	BlockedAt      time.Time `json:"blocked_at,omitempty"`
+	BlockedReason  string    `json:"blocked_reason,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastSeenAt     time.Time `json:"last_seen_at"`
+}
+
 type Publication struct {
 	ID                  string    `json:"id"`
-	OwnerID             string    `json:"owner_id"`
+	OwnerID             string    `json:"owner_id,omitempty"`
+	AgentID             string    `json:"agent_id,omitempty"`
+	Mode                string    `json:"mode"`
 	CreatedIP           string    `json:"created_ip,omitempty"`
 	Title               string    `json:"title"`
 	Slug                string    `json:"slug"`
 	Visibility          string    `json:"visibility"`
 	RequireRegistration bool      `json:"require_registration"`
 	Files               []string  `json:"files"`
+	SizeBytes           int64     `json:"size_bytes"`
 	BlockedAt           time.Time `json:"blocked_at,omitempty"`
 	BlockedReason       string    `json:"blocked_reason,omitempty"`
 	ExpiresAt           time.Time `json:"expires_at,omitempty"`
@@ -166,6 +182,7 @@ type DB struct {
 	Sessions     []Session           `json:"sessions"`
 	MagicLinks   []MagicLink         `json:"magic_links"`
 	APIKeys      []APIKey            `json:"api_keys"`
+	Agents       []Agent             `json:"agents"`
 	Publications []Publication       `json:"publications"`
 	Shares       []Share             `json:"shares"`
 	AccessLogs   []AccessLog         `json:"access_logs"`

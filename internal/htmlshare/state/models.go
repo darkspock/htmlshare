@@ -39,6 +39,19 @@ type AccessLog struct {
 	CreatedAt     time.Time
 }
 
+type Agent struct {
+	ID             string
+	ExternalIDHash string
+	Name           string
+	FirstIp        string
+	LastIp         string
+	StorageBytes   int64
+	BlockedAt      sql.NullTime
+	BlockedReason  sql.NullString
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
+}
+
 type ApiKey struct {
 	ID          string
 	UserID      string
@@ -90,13 +103,16 @@ type MagicLink struct {
 
 type Publication struct {
 	ID                  string
-	OwnerID             string
+	OwnerID             sql.NullString
+	AgentID             sql.NullString
+	Mode                string
 	CreatedIp           sql.NullString
 	Title               string
 	Slug                string
 	Visibility          string
 	RequireRegistration bool
 	Files               []string
+	SizeBytes           int64
 	BlockedAt           sql.NullTime
 	BlockedReason       sql.NullString
 	ExpiresAt           sql.NullTime

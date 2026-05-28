@@ -1,5 +1,5 @@
 -- name: ClearAll :exec
-TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, api_keys, magic_links, sessions, users;
+TRUNCATE signed_access_proofs, signed_access_tokens, comments, bans, strikes, abuse_reports, access_logs, shares, publications, agents, api_keys, magic_links, sessions, users;
 
 -- name: ListUsers :many
 SELECT * FROM users ORDER BY created_at, id;
@@ -29,12 +29,58 @@ SELECT * FROM api_keys ORDER BY created_at, id;
 INSERT INTO api_keys (id, user_id, name, token_prefix, token_hash, created_at, expires_at, last_used_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
+-- name: GetAPIKeyByHash :one
+SELECT * FROM api_keys WHERE token_hash = $1 LIMIT 1;
+
+-- name: UpdateAPIKeyLastUsed :exec
+UPDATE api_keys SET last_used_at = $2 WHERE id = $1;
+
+-- name: GetUserByID :one
+SELECT * FROM users WHERE id = $1 LIMIT 1;
+
+-- name: GetUserByEmail :one
+SELECT * FROM users WHERE email = $1 LIMIT 1;
+
+-- name: ListAgents :many
+SELECT * FROM agents ORDER BY created_at, id;
+
+-- name: UpsertAgent :one
+INSERT INTO agents (id, external_id_hash, name, first_ip, last_ip, storage_bytes, blocked_at, blocked_reason, created_at, last_seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (external_id_hash) DO UPDATE
+SET name = COALESCE(NULLIF(EXCLUDED.name, ''), agents.name),
+    last_ip = EXCLUDED.last_ip,
+    last_seen_at = EXCLUDED.last_seen_at
+RETURNING *;
+
+-- name: IncrementAgentStorage :exec
+UPDATE agents
+SET storage_bytes = storage_bytes + $2,
+    last_seen_at = $3
+WHERE id = $1;
+
 -- name: ListPublications :many
 SELECT * FROM publications ORDER BY created_at, id;
 
 -- name: InsertPublication :exec
-INSERT INTO publications (id, owner_id, created_ip, title, slug, visibility, require_registration, files, blocked_at, blocked_reason, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+INSERT INTO publications (id, owner_id, agent_id, mode, created_ip, title, slug, visibility, require_registration, files, size_bytes, blocked_at, blocked_reason, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
+
+-- name: CountFastPublicationsByIPSince :one
+SELECT count(*) FROM publications
+WHERE mode = 'fast' AND created_ip = $1 AND created_at >= $2;
+
+-- name: CountFastPublicationsByAgentSince :one
+SELECT count(*) FROM publications
+WHERE mode = 'fast' AND agent_id = $1 AND created_at >= $2;
+
+-- name: SumFastStorageByIP :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM publications
+WHERE mode = 'fast' AND created_ip = $1 AND (expires_at IS NULL OR expires_at > $2);
+
+-- name: SumFastStorageByAgent :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM publications
+WHERE mode = 'fast' AND agent_id = $1 AND (expires_at IS NULL OR expires_at > $2);
 
 -- name: ListShares :many
 SELECT * FROM shares ORDER BY created_at, id;

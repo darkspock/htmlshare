@@ -34,6 +34,7 @@ type Publication = {
   id: string;
   title: string;
   slug: string;
+  mode?: string;
   visibility: string;
   require_registration: boolean;
   files: string[];
@@ -90,7 +91,7 @@ type NavKey = "Library" | "Recipients" | "Agent keys" | "Activity" | "Settings";
 const visibilityHelp: Record<string, string> = {
   private: "Private: only you can open it from the console.",
   recipients: "Recipients: only specific emails or allowed domains can open it.",
-  public: "Public: anyone with the link can open it."
+  public: "Link access: anyone with the link can open it."
 };
 
 const navItems: Array<{ key: NavKey; icon: React.ElementType }> = [
@@ -122,8 +123,8 @@ function App() {
   const [abuseDetails, setAbuseDetails] = useState("");
   const [draft, setDraft] = useState<PublishDraft>({
     title: "European market scan",
-    visibility: "recipients",
-    recipients: "reader@example.com",
+    visibility: "public",
+    recipients: "",
     files: []
   });
 
@@ -228,6 +229,7 @@ function App() {
     const data = await api<{ id: string; url: string; slug: string }>("/api/publish", {
       method: "POST",
       body: JSON.stringify({
+        mode: "registered",
         title: draft.title,
         visibility: draft.visibility,
         require_registration: draft.visibility === "recipients",
@@ -246,9 +248,13 @@ function App() {
 
   async function shareSelected() {
     if (!selected || !shareEmail.trim()) return;
+    const recipients = shareEmail
+      .split(/[;,]/)
+      .map((email) => email.trim())
+      .filter(Boolean);
     await api("/api/share", {
       method: "POST",
-      body: JSON.stringify({ id: selected.id, emails: [shareEmail.trim()], message: `Shared from htmlshare: ${selected.title}` })
+      body: JSON.stringify({ id: selected.id, emails: recipients, message: `Shared from htmlshare: ${selected.title}` })
     });
     setShareEmail("");
     setNotice("Share email sent.");
@@ -490,8 +496,8 @@ function Onboarding({
           <div className="agent-note">
             <KeyRound size={15} />
             <div>
-              <b>Agent / MCP key</b>
-              <p>After confirming the email, create a key for `/api/publish` or the MCP endpoint.</p>
+              <b>AI-first publishing</b>
+              <p><a href="/llms.txt">AI Instructions here</a></p>
             </div>
           </div>
           {notice && <pre className="notice-text">{notice}</pre>}
@@ -616,14 +622,14 @@ function LibraryView(props: {
           {["private", "recipients", "public"].map((mode) => (
             <button key={mode} className={selected.visibility === mode ? "selected" : ""} onClick={() => updateSelectedAccess(mode)}>
               {mode === "public" ? <Globe size={14} /> : mode === "private" ? <Lock size={14} /> : <Mail size={14} />}
-              <span>{mode}</span>
+              <span>{accessLabel(mode)}</span>
             </button>
           ))}
         </div>
         <label className="compact-field">
-          <span>Share by email</span>
+          <span>Share by email or domain</span>
           <div>
-            <input value={shareEmail} onChange={(event) => setShareEmail(event.target.value)} placeholder="reader@example.com" />
+            <input value={shareEmail} onChange={(event) => setShareEmail(event.target.value)} placeholder="reader@example.com, @example.com" />
             <button onClick={shareSelected}>
               <Share2 size={14} />
             </button>
@@ -832,8 +838,8 @@ function PublishComposer({
       <input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
       <select value={draft.visibility} onChange={(event) => setDraft((current) => ({ ...current, visibility: event.target.value }))}>
         <option value="private">Private</option>
-        <option value="recipients">Recipients (specific emails)</option>
-        <option value="public">Public</option>
+        <option value="recipients">Recipients (emails or domains)</option>
+        <option value="public">Link access</option>
       </select>
       <small className="visibility-help">{visibilityHelp[draft.visibility]}</small>
       {draft.visibility === "recipients" && (
@@ -896,17 +902,20 @@ function AgentKeysView({ apiKey, createKey }: { apiKey: string; createKey: () =>
           {apiKey && <pre>{apiKey}</pre>}
         </div>
         <div className="code-card">
-          <p className="eyebrow">Simple protocol</p>
+          <p className="eyebrow">Registered protocol</p>
           <pre>{`POST /api/publish
 Authorization: Bearer hsk_...
 Content-Type: application/json
 
 {
+  "mode": "registered",
   "title": "Board file",
+  "visibility": "recipients",
   "files": {
     "index.html": "<!doctype html>..."
   }
 }`}</pre>
+          <p><a href="/llms.txt">AI Instructions here</a></p>
         </div>
       </div>
     </section>
@@ -919,7 +928,7 @@ function ActivityView({ statsByPublication, abuseCases }: { statsByPublication: 
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   return (
     <section className="page-section">
-      <PageTitle eyebrow="Activity" title="Access and abuse review." muted="IP, email, path, status and moderation decisions are recorded." />
+      <PageTitle eyebrow="Activity" title="Access log." muted="IP, email, path and status are recorded when available." />
       <div className="abuse-list">
         {abuseCases.length ? abuseCases.map((publication) => (
           <div key={publication.id}>
@@ -929,7 +938,7 @@ function ActivityView({ statsByPublication, abuseCases }: { statsByPublication: 
             <b>{publication.reason}</b>
             <small>{publication.analysis_summary || publication.status}</small>
           </div>
-        )) : <div className="blank-card">No abuse cases yet.</div>}
+        )) : <div className="blank-card">No abuse notices yet.</div>}
       </div>
       <div className="activity-list">
         {logs.length ? logs.map((log) => (
@@ -1117,6 +1126,12 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function accessLabel(value: string) {
+  if (value === "public") return "Link access";
+  if (value === "recipients") return "Recipients";
+  return "Private";
 }
 
 function initials(value: string) {

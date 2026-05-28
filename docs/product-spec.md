@@ -101,3 +101,13 @@ Limits should be configurable by environment variables so production can be tigh
 The fast AI flow and the registered control flow are separate product modes. Do not force the fast flow through email registration. Do not remove the registered flow, because it is required for access control, analytics, recipient management, and legal proof.
 
 The API should make the mode explicit so agents know whether they are creating a short-lived anonymous publication or a controlled account-owned publication.
+
+## Implementation Plan
+
+1. Replace the current whole-state persistence layer with SQLC-backed incremental queries and transactions.
+2. Update the database schema for separate fast-agent publishing and registered account publishing.
+3. Add the no-email fast publish flow using a session-scoped agent ID, short TTLs, rate limits, and storage quotas.
+4. Keep and clean up the registered account flow for controlled sharing, access logs, recipients, domains, and signed access.
+5. Add reader actions for download, PDF export when supported, and saving a copy into a registered account.
+6. Update the public API, OpenAPI, MCP behavior, and `web/home/llms.txt` together so agents get the correct current instructions.
+7. Update the React app copy and controls so the UI matches the two product modes instead of exposing internal implementation names.

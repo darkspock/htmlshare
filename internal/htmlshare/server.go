@@ -207,6 +207,9 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 					"type":     "object",
 					"required": []string{"files"},
 					"properties": map[string]any{
+						"mode":                 map[string]any{"type": "string", "enum": []string{"fast", "registered"}},
+						"agent_id":             map[string]string{"type": "string"},
+						"agent_name":           map[string]string{"type": "string"},
 						"title":                map[string]string{"type": "string"},
 						"visibility":           map[string]any{"type": "string", "enum": []string{"private", "magic", "recipients", "public"}},
 						"require_registration": map[string]string{"type": "boolean"},
@@ -239,8 +242,8 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			"/api/publish": map[string]any{
 				"post": map[string]any{
 					"summary":     "Publish an HTML bundle",
-					"description": "Canonical agent endpoint. Accepts index.html plus optional CSS/JS/assets as a JSON files map.",
-					"security":    []map[string][]string{{"bearerAuth": []string{}}},
+					"description": "Canonical agent endpoint. Use mode=fast with an agent_id for short-lived no-email publishing, or mode=registered with bearer/session auth for account-owned sharing.",
+					"security":    []map[string][]string{{}, {"bearerAuth": []string{}}, {"sessionCookie": []string{}}},
 					"requestBody": openAPIJSONBody("PublishRequest"),
 					"responses":   openAPIResponses("201", "HTML published"),
 				},
@@ -256,7 +259,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			},
 			"/api/ai/signup": map[string]any{
 				"post": map[string]any{
-					"summary":   "Start AI-first signup with a magic link",
+					"summary":   "Start registered-account automation signup with a magic link",
 					"responses": openAPIResponses("201", "Magic link created"),
 				},
 			},
@@ -479,6 +482,9 @@ func agentKeyName(agent string) string {
 
 type publishRequest struct {
 	Title               string            `json:"title"`
+	Mode                string            `json:"mode"`
+	AgentID             string            `json:"agent_id"`
+	AgentName           string            `json:"agent_name"`
 	Visibility          string            `json:"visibility"`
 	RequireRegistration bool              `json:"require_registration"`
 	ExpiresAt           time.Time         `json:"expires_at"`
@@ -491,12 +497,8 @@ type publishRequest struct {
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
-	user := s.requireAutomationUser(w, r)
-	if user == nil {
-		return
-	}
 	if r.Method == http.MethodPost {
-		s.createPublication(w, r, user)
+		s.createPublication(w, r, nil)
 		return
 	}
 	methodNotAllowed(w)
@@ -752,6 +754,26 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	req.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	fastMode := req.Mode == "fast" || (req.Mode == "" && req.AgentID != "" && user == nil)
+	if fastMode {
+		s.createFastPublication(w, r, req)
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "registered"
+	}
+	if req.Mode != "registered" {
+		http.Error(w, "invalid mode", http.StatusBadRequest)
+		return
+	}
+	if user == nil {
+		user = s.requireAutomationUser(w, r)
+		if user == nil {
+			return
+		}
+	}
 	if req.Title == "" {
 		req.Title = "Untitled file"
 	}
@@ -779,6 +801,7 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 	publication := Publication{
 		ID:                  NewID("pub"),
 		OwnerID:             user.ID,
+		Mode:                "registered",
 		CreatedIP:           clientIP(r),
 		Title:               req.Title,
 		Slug:                Slugify(req.Title),
@@ -788,6 +811,7 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		CreatedAt:           now,
 	}
 	for name, content := range req.Files {
+		publication.SizeBytes += int64(len([]byte(content)))
 		clean, err := s.Store.WritePublicationFile(publication.ID, name, []byte(content))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -795,10 +819,8 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		}
 		publication.Files = append(publication.Files, clean)
 	}
-	if err := s.Store.WithDB(func(db *DB) error {
-		db.Publications = append(db.Publications, publication)
-		return nil
-	}); err != nil {
+	if err := s.Store.AddPublication(publication); err != nil {
+		_ = s.Store.DeletePublicationDir(publication.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -811,6 +833,122 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": publication.ID, "slug": publication.Slug, "url": s.AppURL + "/f/" + publication.Slug + "/", "shares": shares,
+	})
+}
+
+func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, req publishRequest) {
+	now := time.Now()
+	ip := clientIP(r)
+	if ban, ok := s.activeBan(ip, "", now); ok {
+		http.Error(w, "temporarily banned: "+ban.Reason, http.StatusTooManyRequests)
+		return
+	}
+	if req.AgentID == "" {
+		http.Error(w, "agent_id required for fast mode", http.StatusBadRequest)
+		return
+	}
+	if len(req.AgentID) < 8 || len(req.AgentID) > 200 {
+		http.Error(w, "agent_id must be between 8 and 200 characters", http.StatusBadRequest)
+		return
+	}
+	if req.Title == "" {
+		req.Title = "Untitled file"
+	}
+	if len(req.Files) == 0 {
+		http.Error(w, "files required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := req.Files["index.html"]; !ok {
+		http.Error(w, "files.index.html required", http.StatusBadRequest)
+		return
+	}
+	limits := fastPublishLimitsFromEnv()
+	if len(req.Files) > limits.MaxFiles {
+		http.Error(w, "too many files", http.StatusRequestEntityTooLarge)
+		return
+	}
+	var sizeBytes int64
+	for name, content := range req.Files {
+		if _, err := cleanPublicationPath(name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		fileSize := int64(len([]byte(content)))
+		if fileSize > limits.MaxFileBytes {
+			http.Error(w, "file too large: "+name, http.StatusRequestEntityTooLarge)
+			return
+		}
+		sizeBytes += fileSize
+	}
+	if sizeBytes > limits.MaxRequestBytes {
+		http.Error(w, "publish request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	agent, err := s.Store.EnsureAgent(HashToken("agent:"+req.AgentID), req.AgentName, ip, now)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !agent.BlockedAt.IsZero() {
+		http.Error(w, "agent blocked: "+agent.BlockedReason, http.StatusTooManyRequests)
+		return
+	}
+	usage, err := s.Store.FastUsage(agent.ID, ip, now.Add(-time.Hour), now)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if usage.IPCount >= limits.MaxIPPublishesPerHour || usage.AgentCount >= limits.MaxAgentPublishesPerHour {
+		http.Error(w, "fast publish rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	if usage.IPStorage+sizeBytes > limits.MaxIPStorageBytes || usage.AgentStorage+sizeBytes > limits.MaxAgentStorageBytes {
+		http.Error(w, "fast publish storage limit exceeded", http.StatusRequestEntityTooLarge)
+		return
+	}
+	expiresAt := req.ExpiresAt
+	if req.TTLSeconds > 0 {
+		expiresAt = now.Add(time.Duration(req.TTLSeconds) * time.Second)
+	}
+	if expiresAt.IsZero() {
+		expiresAt = now.Add(limits.DefaultTTL)
+	}
+	if expiresAt.After(now.Add(limits.MaxTTL)) {
+		http.Error(w, "fast publications must expire within "+limits.MaxTTL.String(), http.StatusBadRequest)
+		return
+	}
+	publication := Publication{
+		ID:         NewID("pub"),
+		AgentID:    agent.ID,
+		Mode:       "fast",
+		CreatedIP:  ip,
+		Title:      req.Title,
+		Slug:       Slugify(req.Title),
+		Visibility: "public",
+		ExpiresAt:  expiresAt,
+		CreatedAt:  now,
+		SizeBytes:  sizeBytes,
+	}
+	for name, content := range req.Files {
+		clean, err := s.Store.WritePublicationFile(publication.ID, name, []byte(content))
+		if err != nil {
+			_ = s.Store.DeletePublicationDir(publication.ID)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		publication.Files = append(publication.Files, clean)
+	}
+	if err := s.Store.AddPublication(publication); err != nil {
+		_ = s.Store.DeletePublicationDir(publication.ID)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":         publication.ID,
+		"slug":       publication.Slug,
+		"url":        s.AppURL + "/f/" + publication.Slug + "/",
+		"mode":       publication.Mode,
+		"expires_at": publication.ExpiresAt,
 	})
 }
 
@@ -1723,10 +1861,7 @@ func (s *Server) createMagicLink(user User, purpose, publicationID string) (stri
 		expiresAt = time.Now().Add(24 * time.Hour)
 	}
 	link := MagicLink{ID: NewID("ml"), UserID: user.ID, Email: user.Email, TokenHash: HashToken(raw), Purpose: purpose, PublicationID: publicationID, ExpiresAt: expiresAt, CreatedAt: time.Now()}
-	if err := s.Store.WithDB(func(db *DB) error {
-		db.MagicLinks = append(db.MagicLinks, link)
-		return nil
-	}); err != nil {
+	if err := s.Store.AddMagicLink(link); err != nil {
 		return "", err
 	}
 	return s.AppURL + "/auth/magic?token=" + raw, nil
@@ -1761,37 +1896,17 @@ func (s *Server) sharePublication(publication Publication, target, message strin
 		return "", errors.New("valid recipient email or @domain required")
 	}
 	if strings.HasPrefix(target, "@") {
-		if err := s.Store.WithDB(func(db *DB) error {
-			db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: target, CreatedAt: time.Now()})
-			return nil
-		}); err != nil {
+		if err := s.Store.AddShare(Share{ID: NewID("shr"), PublicationID: publication.ID, Email: target, CreatedAt: time.Now()}); err != nil {
 			return "", err
 		}
 		return s.AppURL + "/f/" + publication.Slug + "/", nil
 	}
-	var user User
 	now := time.Now()
-	if err := s.Store.WithDB(func(db *DB) error {
-		for _, candidate := range db.Users {
-			if candidate.Email == target {
-				user = candidate
-				break
-			}
-		}
-		if user.ID == "" {
-			user = User{
-				ID:                   NewID("usr"),
-				Email:                target,
-				Provider:             "magic",
-				AutoProvisioned:      true,
-				ConfirmationDeadline: now.Add(24 * time.Hour),
-				CreatedAt:            now,
-			}
-			db.Users = append(db.Users, user)
-		}
-		db.Shares = append(db.Shares, Share{ID: NewID("shr"), PublicationID: publication.ID, Email: target, UserID: user.ID, CreatedAt: now})
-		return nil
-	}); err != nil {
+	user, err := s.Store.EnsureMagicUser(target, now)
+	if err != nil {
+		return "", err
+	}
+	if err := s.Store.AddShare(Share{ID: NewID("shr"), PublicationID: publication.ID, Email: target, UserID: user.ID, CreatedAt: now}); err != nil {
 		return "", err
 	}
 	link, err := s.createMagicLink(user, "share", publication.ID)
@@ -1817,26 +1932,11 @@ func (s *Server) requireAutomationUser(w http.ResponseWriter, r *http.Request) *
 		http.Error(w, "session or bearer api key required", http.StatusUnauthorized)
 		return nil
 	}
-	var user *User
-	_ = s.Store.WithDB(func(db *DB) error {
-		hash := HashToken(auth)
-		for i := range db.APIKeys {
-			if db.APIKeys[i].TokenHash == hash {
-				if !db.APIKeys[i].ExpiresAt.IsZero() && time.Now().After(db.APIKeys[i].ExpiresAt) {
-					return nil
-				}
-				db.APIKeys[i].LastUsedAt = time.Now()
-				for _, candidate := range db.Users {
-					if candidate.ID == db.APIKeys[i].UserID {
-						copy := candidate
-						user = &copy
-						return nil
-					}
-				}
-			}
-		}
+	user, err := s.Store.UserByAPIKey(HashToken(auth), time.Now())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil
-	})
+	}
 	if user == nil {
 		http.Error(w, "invalid api key", http.StatusUnauthorized)
 	}
@@ -1923,10 +2023,7 @@ func (s *Server) logPublicationAccess(r *http.Request, publication Publication, 
 		entry.UserID = user.ID
 		entry.Email = user.Email
 	}
-	_ = s.Store.WithDB(func(db *DB) error {
-		db.AccessLogs = append(db.AccessLogs, entry)
-		return nil
-	})
+	_ = s.Store.AddAccessLog(entry)
 }
 
 func clientIP(r *http.Request) string {
@@ -2022,6 +2119,56 @@ func validVisibility(value string) bool {
 	default:
 		return false
 	}
+}
+
+type fastPublishLimits struct {
+	MaxFiles                 int
+	MaxFileBytes             int64
+	MaxRequestBytes          int64
+	MaxIPPublishesPerHour    int64
+	MaxAgentPublishesPerHour int64
+	MaxIPStorageBytes        int64
+	MaxAgentStorageBytes     int64
+	DefaultTTL               time.Duration
+	MaxTTL                   time.Duration
+}
+
+func fastPublishLimitsFromEnv() fastPublishLimits {
+	return fastPublishLimits{
+		MaxFiles:                 envInt("HTMLSHARE_FAST_MAX_FILES", 20),
+		MaxFileBytes:             envInt64("HTMLSHARE_FAST_MAX_FILE_BYTES", 2*1024*1024),
+		MaxRequestBytes:          envInt64("HTMLSHARE_FAST_MAX_REQUEST_BYTES", 8*1024*1024),
+		MaxIPPublishesPerHour:    int64(envInt("HTMLSHARE_FAST_MAX_IP_PUBLISHES_PER_HOUR", 30)),
+		MaxAgentPublishesPerHour: int64(envInt("HTMLSHARE_FAST_MAX_AGENT_PUBLISHES_PER_HOUR", 60)),
+		MaxIPStorageBytes:        envInt64("HTMLSHARE_FAST_MAX_IP_STORAGE_BYTES", 100*1024*1024),
+		MaxAgentStorageBytes:     envInt64("HTMLSHARE_FAST_MAX_AGENT_STORAGE_BYTES", 100*1024*1024),
+		DefaultTTL:               time.Duration(envInt("HTMLSHARE_FAST_DEFAULT_TTL_SECONDS", 24*60*60)) * time.Second,
+		MaxTTL:                   time.Duration(envInt("HTMLSHARE_FAST_MAX_TTL_SECONDS", 7*24*60*60)) * time.Second,
+	}
+}
+
+func envInt(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt64(name string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func validRecipientTarget(value string) bool {
