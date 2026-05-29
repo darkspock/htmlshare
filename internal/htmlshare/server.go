@@ -1860,6 +1860,10 @@ func (s *Server) publicationAsset(w http.ResponseWriter, r *http.Request) {
 	user := s.currentUser(r)
 	if !s.canReadPublication(r, publication) {
 		s.logPublicationAccess(r, publication, file, user, false, http.StatusForbidden)
+		if file == "index.html" {
+			s.publicationAccessGate(w, r, publication, user)
+			return
+		}
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
@@ -1894,6 +1898,86 @@ func (s *Server) publicationAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logPublicationAccess(r, publication, file, user, true, http.StatusOK)
 	_, _ = io.Copy(w, bytes.NewReader(raw))
+}
+
+func (s *Server) publicationAccessGate(w http.ResponseWriter, r *http.Request, publication Publication, user *User) {
+	message := ""
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+		if !validRecipientTarget(email) || strings.HasPrefix(email, "@") {
+			message = "Enter a valid email address."
+		} else {
+			s.maybeSendPublicationAccessEmail(publication, email)
+			message = "If that email is authorized, an access email is on the way."
+		}
+	}
+	w.Header().Set("content-type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, publicationAccessGateHTML(publication, user, s.GoogleClient != "", message))
+}
+
+func (s *Server) maybeSendPublicationAccessEmail(publication Publication, email string) {
+	if publication.Visibility != "recipients" && publication.Visibility != "magic" && publication.Visibility != "signed" {
+		return
+	}
+	authorized := false
+	domainOnly := false
+	_ = s.Store.ReadDB(func(db DB) error {
+		for _, share := range db.Shares {
+			if share.PublicationID != publication.ID {
+				continue
+			}
+			if share.Email == email {
+				authorized = true
+				return nil
+			}
+			if domainShareMatches(share.Email, email) {
+				authorized = true
+				domainOnly = true
+				return nil
+			}
+		}
+		return nil
+	})
+	if !authorized {
+		return
+	}
+	if publication.Visibility == "signed" {
+		if domainOnly {
+			return
+		}
+		_, _, _ = s.createSignedAccessForEmail(publication, email, "")
+		return
+	}
+	_ = s.sendMagicAccessEmail(publication, email)
+}
+
+func (s *Server) sendMagicAccessEmail(publication Publication, email string) error {
+	now := time.Now()
+	user, err := s.Store.EnsureMagicUser(email, now)
+	if err != nil {
+		return err
+	}
+	link, err := s.createMagicLink(user, "share", publication.ID)
+	if err != nil {
+		return err
+	}
+	text, html := RenderTransactionalEmail(TransactionalEmail{
+		AppURL:        s.AppURL,
+		Title:         "Access requested: " + publication.Title,
+		Preheader:     "Open the shared htmlshare file.",
+		Intro:         "An access link was requested for a file shared with this email address.",
+		Body:          "Use the button below to confirm this email and open the file.",
+		ActionLabel:   "Open file",
+		ActionURL:     link,
+		Details:       []string{"File: " + publication.Title},
+		FooterContext: "requesting access to an htmlshare file",
+	})
+	return s.Mailer.Send(email, "Access requested: "+publication.Title, text, html)
 }
 
 func (s *Server) magic(w http.ResponseWriter, r *http.Request) {
@@ -2242,6 +2326,9 @@ func (s *Server) googleStart(w http.ResponseWriter, r *http.Request) {
 	if redirect == "" {
 		redirect = s.AppURL + "/auth/google/callback"
 	}
+	if next := safeRedirectPath(r.URL.Query().Get("next")); next != "" {
+		http.SetCookie(w, redirectCookie(next, 10*time.Minute))
+	}
 	q := url.Values{}
 	q.Set("client_id", s.GoogleClient)
 	q.Set("redirect_uri", redirect)
@@ -2324,7 +2411,11 @@ func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	http.SetCookie(w, SessionCookie(session.ID, s.SessionSecret))
-	http.Redirect(w, r, "/app/", http.StatusFound)
+	next := consumeRedirectCookie(w, r)
+	if next == "" {
+		next = "/app/"
+	}
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 func (s *Server) googleIDToken(w http.ResponseWriter, r *http.Request) {
@@ -2913,6 +3004,38 @@ func domainShareMatches(shareTarget, email string) bool {
 	return strings.HasPrefix(shareTarget, "@") && strings.HasSuffix(email, shareTarget)
 }
 
+func safeRedirectPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\r\n") {
+		return ""
+	}
+	return value
+}
+
+func redirectCookie(path string, ttl time.Duration) *http.Cookie {
+	return &http.Cookie{
+		Name:     "hs_next",
+		Value:    url.QueryEscape(path),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Now().Add(ttl),
+	}
+}
+
+func consumeRedirectCookie(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie("hs_next")
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: "hs_next", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Now().Add(-time.Hour)})
+	value, err := url.QueryUnescape(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	return safeRedirectPath(value)
+}
+
 func publicUser(user User) map[string]string {
 	confirmed := "false"
 	if user.EmailConfirmed() {
@@ -3251,6 +3374,68 @@ func confirmShareHTML(token, title string) string {
     <form method="post" action="/auth/magic?token=` + url.QueryEscape(token) + `">
       <button type="submit">Open file</button>
     </form>
+  </main>
+</body>
+</html>`
+}
+
+func publicationAccessGateHTML(publication Publication, user *User, googleEnabled bool, message string) string {
+	status := ""
+	if strings.TrimSpace(message) != "" {
+		status = `<p class="status">` + htmlEscape(message) + `</p>`
+	}
+	userLine := ""
+	if user != nil && user.Email != "" {
+		userLine = `<p class="status muted">Signed in as ` + htmlEscape(user.Email) + `, but this account is not authorized for this file.</p>`
+	}
+	google := ""
+	if googleEnabled {
+		next := "/f/" + publication.Slug + "/"
+		google = `<a class="button secondary" href="/auth/google?next=` + url.QueryEscape(next) + `">Continue with Google</a>`
+	}
+	title := "Sign in to open this file."
+	body := "This htmlshare file is restricted. Use an authorized email address to request an access link."
+	emailLabel := "Send access link"
+	if publication.Visibility == "signed" {
+		title = "Signed access required."
+		body = "This htmlshare file requires email-code signature before it can be opened. Enter the authorized email address to receive a signed-access link."
+		emailLabel = "Send signed-access link"
+	}
+	if publication.Visibility == "private" {
+		body = "This file is private. Sign in with the owner account to open it."
+		emailLabel = ""
+	}
+	emailForm := ""
+	if emailLabel != "" {
+		emailForm = `<form method="post" action="/f/` + url.QueryEscape(publication.Slug) + `/">
+      <input name="email" type="email" autocomplete="email" placeholder="authorized@email.com" aria-label="Authorized email">
+      <button type="submit">` + htmlEscape(emailLabel) + `</button>
+    </form>`
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access required · htmlshare</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#242624;color:#fefaf6}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:#f5f2ed;background-image:linear-gradient(rgba(36,38,36,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(36,38,36,.08) 1px,transparent 1px);background-size:72px 72px}
+    main{width:min(100%,620px);background:#242624;border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 70px rgba(0,0,0,.18);padding:36px}.brand-page{display:inline-flex;align-items:center;gap:10px;color:#fefaf6;text-decoration:none}.brand-page img{width:58px;height:34px;object-fit:contain}.brand-page b{font-size:18px;letter-spacing:-.03em}.brand-page span{color:#b8bab8;font-weight:400}
+    h1{margin:28px 0 10px;font-size:42px;line-height:.96;letter-spacing:-.03em}p{color:#b8bab8;line-height:1.55}.eyebrow{margin:24px 0 0;color:#b8a8d8;font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase}.status{border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px 14px;background:#2e302e;color:#fefaf6}.muted{color:#b8bab8}
+    form{display:flex;gap:10px;margin-top:16px}input{min-width:0;flex:1;min-height:52px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:#181a18;color:#fefaf6;padding:0 18px;font:700 16px/1 inherit}button,.button{min-height:52px;border:0;border-radius:999px;background:#fefaf6;color:#242624;padding:0 22px;font-family:inherit;font-size:15px;font-weight:800;line-height:52px;cursor:pointer;text-decoration:none;text-align:center}.secondary{display:block;margin-top:14px;border:1px solid rgba(255,255,255,.16);background:transparent;color:#fefaf6}
+    @media (max-width:620px){form{flex-direction:column}button,.button{width:100%}}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="brand-page" href="/"><img src="/logo.png" alt=""><b>html<span>share</span></b></a>
+    <p class="eyebrow">Access required</p>
+    <h1>` + htmlEscape(title) + `</h1>
+    <p><strong>` + htmlEscape(publication.Title) + `</strong></p>
+    <p>` + htmlEscape(body) + `</p>
+    ` + userLine + status + emailForm + google + `
   </main>
 </body>
 </html>`

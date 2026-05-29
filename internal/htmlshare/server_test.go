@@ -211,9 +211,16 @@ func TestRegisteredSignedPublishCreatesInvitationAndRequiresProof(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	raw, err := io.ReadAll(readResp.Body)
 	_ = readResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if readResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("read before proof status = %d, want %d", readResp.StatusCode, http.StatusForbidden)
+	}
+	if !strings.Contains(string(raw), "Signed access required") || !strings.Contains(string(raw), "Send signed-access link") {
+		t.Fatalf("signed gate body = %q", string(raw))
 	}
 }
 
@@ -327,9 +334,29 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	raw, err := io.ReadAll(anonymousResp.Body)
 	_ = anonymousResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if anonymousResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("anonymous status = %d, want %d", anonymousResp.StatusCode, http.StatusForbidden)
+	}
+	if !strings.Contains(string(raw), "Access required") || !strings.Contains(string(raw), "Send access link") {
+		t.Fatalf("anonymous gate body = %q", string(raw))
+	}
+
+	requestResp, err := http.PostForm(publicURL, url.Values{"email": []string{"reader@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = io.ReadAll(requestResp.Body)
+	_ = requestResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestResp.StatusCode != http.StatusForbidden || !strings.Contains(string(raw), "access email is on the way") {
+		t.Fatalf("request access status/body = %d %q", requestResp.StatusCode, string(raw))
 	}
 
 	magicURL := latestOutboxLink(t, store)
@@ -337,7 +364,7 @@ func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := io.ReadAll(magicGetResp.Body)
+	raw, err = io.ReadAll(magicGetResp.Body)
 	_ = magicGetResp.Body.Close()
 	if err != nil {
 		t.Fatal(err)
