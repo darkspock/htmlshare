@@ -427,8 +427,16 @@ func (s *Server) aiSignup(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		text := "A new htmlshare agent key was requested for " + user.Email + ".\n\nToken: " + apiKey + "\n\nStore it in your agent secret store. It expires in 1 year."
-		html := `<p>A new htmlshare agent key was requested for <strong>` + htmlEscape(user.Email) + `</strong>.</p><p><code>` + htmlEscape(apiKey) + `</code></p><p>Store it in your agent secret store. It expires in 1 year.</p>`
+		text, html := RenderTransactionalEmail(TransactionalEmail{
+			AppURL:         s.AppURL,
+			Title:          "Your htmlshare agent key",
+			Preheader:      "A new automation key was requested for your htmlshare account.",
+			Intro:          "A new htmlshare agent key was requested for " + user.Email + ".",
+			Body:           "Store it in your agent secret store. It expires in 1 year.",
+			HighlightLabel: "Agent key",
+			HighlightValue: apiKey,
+			FooterContext:  "creating an htmlshare automation key",
+		})
 		_ = s.Mailer.Send(user.Email, "Your htmlshare agent key", text, html)
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"existing_account": true,
@@ -449,7 +457,17 @@ func (s *Server) aiSignup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = s.Mailer.Send(user.Email, "Confirm your htmlshare agent token", "Confirm your htmlshare account:\n\n"+magicURL, `<p>Confirm your htmlshare account and extend your temporary agent token:</p><p><a href="`+magicURL+`">Confirm htmlshare</a></p>`)
+	text, html := RenderTransactionalEmail(TransactionalEmail{
+		AppURL:        s.AppURL,
+		Title:         "Confirm your htmlshare agent token",
+		Preheader:     "Confirm this account to extend the temporary agent token.",
+		Intro:         "Confirm your htmlshare account and extend your temporary agent token.",
+		Body:          "If you did not request this, you can ignore this email.",
+		ActionLabel:   "Confirm htmlshare",
+		ActionURL:     magicURL,
+		FooterContext: "confirming an htmlshare automation account",
+	})
+	_ = s.Mailer.Send(user.Email, "Confirm your htmlshare agent token", text, html)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"user_id":           user.ID,
 		"email":             user.Email,
@@ -1615,8 +1633,21 @@ func (s *Server) createSignedAccessForEmail(publication Publication, email, mess
 		return SignedAccessToken{}, "", err
 	}
 	link := s.AppURL + "/auth/signed?token=" + raw
-	text := strings.TrimSpace(message + "\n\nLegal signed access for " + publication.Title + "\n" + link)
-	html := `<p>` + htmlEscape(message) + `</p><p>Legal signed access for <strong>` + htmlEscape(publication.Title) + `</strong>:</p><p><a href="` + link + `">Open signed link</a></p>`
+	intro := strings.TrimSpace(message)
+	if intro == "" {
+		intro = "A file was shared with you for signed access."
+	}
+	text, html := RenderTransactionalEmail(TransactionalEmail{
+		AppURL:        s.AppURL,
+		Title:         "Signature requested: " + publication.Title,
+		Preheader:     "Open htmlshare and complete email-code signature.",
+		Intro:         intro,
+		Body:          "This file requires email-code proof before it can be opened. Opening the link alone does not record a signature.",
+		ActionLabel:   "Open signed access",
+		ActionURL:     link,
+		Details:       []string{"File: " + publication.Title, "The signature is recorded only after the email code is accepted."},
+		FooterContext: "requesting signed access to an htmlshare file",
+	})
 	_ = s.Mailer.Send(email, "Signed access: "+publication.Title, text, html)
 	return token, link, nil
 }
@@ -2077,8 +2108,16 @@ func (s *Server) sendSignedAccessCode(raw string) error {
 	if err != nil {
 		return err
 	}
-	text := "Signature code for " + publication.Title + ":\n\n" + code + "\n\nThis code expires in 10 minutes."
-	html := `<p>Signature code for <strong>` + htmlEscape(publication.Title) + `</strong>:</p><p><code style="font-size:24px">` + htmlEscape(code) + `</code></p><p>This code expires in 10 minutes.</p>`
+	text, html := RenderTransactionalEmail(TransactionalEmail{
+		AppURL:         s.AppURL,
+		Title:          "Your htmlshare signature code",
+		Preheader:      "Use this code to complete signed access.",
+		Intro:          "Use this code to complete signed access for " + publication.Title + ".",
+		Body:           "The code expires in 10 minutes. The signature is recorded only after this code is accepted.",
+		HighlightLabel: "Signature code",
+		HighlightValue: code,
+		FooterContext:  "verifying signed access to an htmlshare file",
+	})
 	_ = s.Mailer.Send(token.Email, "Signature code: "+publication.Title, text, html)
 	return nil
 }
@@ -2414,8 +2453,21 @@ func (s *Server) sharePublication(publication Publication, target, message strin
 	if err != nil {
 		return "", err
 	}
-	text := strings.TrimSpace(message + "\n\n" + publication.Title + "\n" + link)
-	html := fmt.Sprintf(`<p>%s</p><p><a href="%s">Open file</a></p>`, htmlEscape(message), link)
+	intro := strings.TrimSpace(message)
+	if intro == "" {
+		intro = "A file was shared with you on htmlshare."
+	}
+	text, html := RenderTransactionalEmail(TransactionalEmail{
+		AppURL:        s.AppURL,
+		Title:         "File shared with you: " + publication.Title,
+		Preheader:     "Open the shared htmlshare file.",
+		Intro:         intro,
+		Body:          "Use the button below to open the file. Access may require confirming this email address.",
+		ActionLabel:   "Open file",
+		ActionURL:     link,
+		Details:       []string{"File: " + publication.Title},
+		FooterContext: "sharing an htmlshare file with you",
+	})
 	_ = s.Mailer.Send(target, "Shared file: "+publication.Title, text, html)
 	return link, nil
 }
