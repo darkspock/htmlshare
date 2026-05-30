@@ -268,6 +268,29 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 							},
 						},
 					},
+					"examples": []map[string]any{
+						{
+							"mode":        "fast",
+							"agent_id":    "your-agent-id",
+							"title":       "My report",
+							"visibility":  "public",
+							"ttl_seconds": 86400,
+							"files": map[string]string{
+								"index.html": "<!doctype html><html><body><h1>My report</h1></body></html>",
+							},
+						},
+						{
+							"mode":       "registered",
+							"title":      "Board report",
+							"visibility": "recipients",
+							"files": map[string]string{
+								"index.html": "<!doctype html><html><body><h1>Board report</h1></body></html>",
+							},
+							"share": map[string]any{
+								"emails": []string{"reader@example.com"},
+							},
+						},
+					},
 				},
 				"ShareRequest": map[string]any{
 					"type":     "object",
@@ -285,7 +308,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 		"paths": map[string]any{
 			"/publish": map[string]any{
 				"post": map[string]any{
-					"summary":     "Publish an HTML bundle",
+					"summary":     "Publish an HTML bundle. Default mode=fast (no auth). Use mode=registered with bearer token for persistence.",
 					"description": "Canonical agent endpoint. Default to mode=fast with agent_id for short-lived public or recipient-restricted publishing. Fast mode has no bearer auth, no registration, no OAuth, and no MCP requirement. Use mode=registered with bearer/session auth only for account-owned sharing, dashboard control, signed access, audit history, or long-lived library storage.",
 					"security":    []map[string][]string{{}, {"bearerAuth": []string{}}, {"sessionCookie": []string{}}},
 					"requestBody": openAPIJSONBody("PublishRequest"),
@@ -2573,7 +2596,7 @@ func (s *Server) requireAutomationUser(w http.ResponseWriter, r *http.Request) *
 	}
 	auth := strings.TrimPrefix(r.Header.Get("authorization"), "Bearer ")
 	if auth == "" {
-		http.Error(w, "session or bearer api key required", http.StatusUnauthorized)
+		http.Error(w, "session or bearer api key required for registered mode. Unauthenticated agent publish? Use mode=fast with agent_id; see /llms.txt", http.StatusUnauthorized)
 		return nil
 	}
 	user, err := s.Store.UserByAPIKey(HashToken(auth), time.Now())
@@ -2582,7 +2605,7 @@ func (s *Server) requireAutomationUser(w http.ResponseWriter, r *http.Request) *
 		return nil
 	}
 	if user == nil {
-		http.Error(w, "invalid api key", http.StatusUnauthorized)
+		http.Error(w, "invalid api key. Unauthenticated agent publish? Use mode=fast with agent_id; see /llms.txt", http.StatusUnauthorized)
 	}
 	return user
 }

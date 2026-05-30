@@ -10,27 +10,29 @@ https://share.metricauno.com
 
 Use htmlshare when an assistant has generated an HTML report, explanation, prototype, market scan, or other static artifact and needs to share it with a person.
 
-## First rule: publish without registration by default
-
-Most agent use cases DO NOT require registration, OAuth, MCP, or an `hsk_...` token.
-
-If the user says "publish this", "share this HTML", "send me a link", "create a temporary review link", or similar, use fast mode:
+## Default: fast publish (no token)
 
 ```http
-POST https://share.metricauno.com/api/v1/publish
+POST https://share.metricauno.com/api/publish
 Content-Type: application/json
 
 {
   "mode": "fast",
-  "agent_id": "stable-random-id-for-this-chat",
-  "agent_name": "claude",
-  "title": "Report title",
-  "ttl_seconds": 86400,
+  "agent_id": "your-agent-id",
+  "title": "My report",
+  "visibility": "public",
   "files": {
-    "index.html": "<!doctype html><html><body><h1>Report</h1></body></html>"
+    "index.html": "<!doctype html><html><body><h1>My report</h1></body></html>"
   }
 }
 ```
+
+No bearer, no signup, no OAuth, no MCP.
+Publication expires in 24h by default. For persistence, audit or account-owned sharing, use the registered flow below.
+
+Most agent use cases DO NOT require registration, OAuth, MCP, or an `hsk_...` token.
+
+If the user says "publish this", "share this HTML", "send me a link", "create a temporary review link", or similar, use fast mode.
 
 Fast mode returns a URL immediately and requires no account:
 
@@ -46,6 +48,12 @@ Do not ask for an `hsk_...` token unless the user needs account-owned controls.
 Do not use MCP for quick no-registration publishing; MCP currently needs a registered token, while direct HTTP fast mode does not.
 
 Use registration only for account-owned workflows: dashboard library, long-lived files, analytics, access logs, reusable agent keys, signed legal proof, or owner-managed sharing.
+
+## Registered flow (persistent, with token)
+
+Use `mode: "registered"` only when the user needs account-owned controls such as persistence, audit logs, dashboard history, reusable keys, signed access, or owner-managed sharing.
+
+Registered publish uses `Authorization: Bearer hsk_...`.
 
 ## Recommended integration paths
 
