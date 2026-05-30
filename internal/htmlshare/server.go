@@ -228,7 +228,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 		"info": map[string]any{
 			"title":       "htmlshare API",
 			"version":     apiVersion,
-			"description": "AI-first API for publishing and sharing generated HTML pages.",
+			"description": "AI-first API for publishing and sharing generated HTML pages. Default agent flow: POST /publish with mode=fast and agent_id. Fast mode requires no registration, no OAuth, no MCP, and no bearer token.",
 		},
 		"servers": []map[string]string{{"url": s.AppURL + "/api/" + apiVersion}},
 		"components": map[string]any{
@@ -286,7 +286,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			"/publish": map[string]any{
 				"post": map[string]any{
 					"summary":     "Publish an HTML bundle",
-					"description": "Canonical agent endpoint. Use mode=fast with an agent_id for short-lived public or recipient-restricted publishing without bearer auth. Use mode=registered with bearer/session auth for account-owned sharing, dashboard control, signed access, or long-lived library storage.",
+					"description": "Canonical agent endpoint. Default to mode=fast with agent_id for short-lived public or recipient-restricted publishing. Fast mode has no bearer auth, no registration, no OAuth, and no MCP requirement. Use mode=registered with bearer/session auth only for account-owned sharing, dashboard control, signed access, audit history, or long-lived library storage.",
 					"security":    []map[string][]string{{}, {"bearerAuth": []string{}}, {"sessionCookie": []string{}}},
 					"requestBody": openAPIJSONBody("PublishRequest"),
 					"responses":   openAPIResponses("201", "HTML published"),

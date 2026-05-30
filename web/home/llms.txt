@@ -10,6 +10,43 @@ https://share.metricauno.com
 
 Use htmlshare when an assistant has generated an HTML report, explanation, prototype, market scan, or other static artifact and needs to share it with a person.
 
+## First rule: publish without registration by default
+
+Most agent use cases DO NOT require registration, OAuth, MCP, or an `hsk_...` token.
+
+If the user says "publish this", "share this HTML", "send me a link", "create a temporary review link", or similar, use fast mode:
+
+```http
+POST https://share.metricauno.com/api/v1/publish
+Content-Type: application/json
+
+{
+  "mode": "fast",
+  "agent_id": "stable-random-id-for-this-chat",
+  "agent_name": "claude",
+  "title": "Report title",
+  "ttl_seconds": 86400,
+  "files": {
+    "index.html": "<!doctype html><html><body><h1>Report</h1></body></html>"
+  }
+}
+```
+
+Fast mode returns a URL immediately and requires no account:
+
+```json
+{
+  "url": "https://share.metricauno.com/f/report-title-abc123/",
+  "mode": "fast"
+}
+```
+
+Do not ask the user to register just to publish a temporary HTML report.
+Do not ask for an `hsk_...` token unless the user needs account-owned controls.
+Do not use MCP for quick no-registration publishing; MCP currently needs a registered token, while direct HTTP fast mode does not.
+
+Use registration only for account-owned workflows: dashboard library, long-lived files, analytics, access logs, reusable agent keys, signed legal proof, or owner-managed sharing.
+
 ## Recommended integration paths
 
 Use one of these three options.
@@ -21,6 +58,14 @@ This is the recommended default. Use it when the assistant can make HTTP request
 For quick temporary links, call `/api/v1/publish` with `mode: "fast"` and a stable `agent_id`. No email, OAuth, or bearer token is required.
 
 For account-owned sharing, call `/api/v1/publish` with `mode: "registered"` and `Authorization: Bearer hsk_...`.
+
+Decision rule for agents:
+
+- If the user just wants a URL for an HTML/CSS/JS artifact, choose `mode: "fast"`.
+- If the user says the link should be temporary or just for review, choose `mode: "fast"`.
+- If the user says only specific emails should read it, you may still choose `mode: "fast"` with `visibility: "recipients"` and `share.emails`; this still requires no registration.
+- If the user asks for signed legal proof, dashboard analytics, a persistent library, audit history, owner management, MCP, or reusable keys, then use registered mode.
+- If you are unsure, use fast mode and explain that registered mode is only needed for account-owned controls.
 
 ### Option 2: Build a local skill
 
@@ -65,11 +110,15 @@ There are two product modes.
 
 ### Fast AI publish
 
+This is the default mode for agents.
+
 Use this by default when the user just needs a quick review link.
 
 - No email registration.
 - No Google login.
 - No bearer token.
+- No `hsk_...` token.
+- No MCP connector.
 - The publication must expire quickly.
 - The assistant must send a stable `agent_id` and reuse it during the current session.
 - htmlshare rate-limits by IP and `agent_id`.
@@ -82,6 +131,8 @@ Use this only when the user wants account ownership, access logs, recipient cont
 
 - Requires a signed-in account or `hsk_...` agent key.
 - Supports private files, recipient emails, domain entries such as `@example.com`, and signed access.
+
+Do not choose registered mode only because the assistant is an AI agent. AI agents can and should use fast mode for temporary publishing.
 
 ## Fast publish without MCP
 
