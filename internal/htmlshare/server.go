@@ -608,6 +608,34 @@ type publishRequest struct {
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"endpoint":      s.AppURL + "/api/" + apiVersion + "/publish",
+			"method":        "POST",
+			"summary":       "Publish an HTML bundle. Default mode=fast requires no authentication.",
+			"auth_required": false,
+			"default_mode":  "fast",
+			"llms_txt":      s.AppURL + "/llms.txt",
+			"openapi_url":   s.AppURL + "/api",
+			"curl": `curl -X POST https://share.metricauno.com/api/publish \
+  -H 'content-type: application/json' \
+  --data '{"mode":"fast","agent_id":"your-agent-id","title":"My report","visibility":"public","files":{"index.html":"<!doctype html><html><body><h1>My report</h1></body></html>"}}'`,
+			"example": map[string]any{
+				"mode":       "fast",
+				"agent_id":   "your-agent-id",
+				"title":      "My report",
+				"visibility": "public",
+				"files": map[string]string{
+					"index.html": "<!doctype html><html><body><h1>My report</h1></body></html>",
+				},
+			},
+			"registered_mode": map[string]any{
+				"auth_required": true,
+				"when":          "Use only for account-owned persistence, audit logs, signed access, owner dashboard, or reusable MCP/API keys.",
+			},
+		})
+		return
+	}
 	if r.Method == http.MethodPost {
 		s.createPublication(w, r, nil)
 		return
@@ -1035,7 +1063,7 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		req.Mode = "registered"
 	}
 	if req.Mode != "registered" {
-		http.Error(w, "invalid mode", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid mode")
 		return
 	}
 	if user == nil {
@@ -1048,11 +1076,11 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		req.Title = "Untitled file"
 	}
 	if len(req.Files) == 0 {
-		http.Error(w, "files required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "files required")
 		return
 	}
 	if _, ok := req.Files["index.html"]; !ok {
-		http.Error(w, "files.index.html required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "files.index.html required")
 		return
 	}
 	visibility := req.Visibility
@@ -1060,18 +1088,18 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		visibility = "recipients"
 	}
 	if !validVisibility(visibility) {
-		http.Error(w, "invalid visibility", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid visibility")
 		return
 	}
 	shareTargets, err := normalizeShareTargets(req.Share.Emails)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if visibility == "signed" {
 		for _, target := range shareTargets {
 			if strings.HasPrefix(target, "@") {
-				http.Error(w, "signed access requires specific email recipients", http.StatusBadRequest)
+				writeAPIError(w, http.StatusBadRequest, "signed access requires specific email recipients")
 				return
 			}
 		}
@@ -1097,7 +1125,7 @@ func (s *Server) createPublication(w http.ResponseWriter, r *http.Request, user 
 		publication.SizeBytes += int64(len([]byte(content)))
 		clean, err := s.Store.WritePublicationFile(publication.ID, name, []byte(content))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		publication.Files = append(publication.Files, clean)
@@ -1128,48 +1156,48 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 	now := time.Now()
 	ip := clientIP(r)
 	if ban, ok := s.activeBan(ip, "", now); ok {
-		http.Error(w, "temporarily banned: "+ban.Reason, http.StatusTooManyRequests)
+		writeAPIError(w, http.StatusTooManyRequests, "temporarily banned: "+ban.Reason)
 		return
 	}
 	if req.AgentID == "" {
-		http.Error(w, "agent_id required for fast mode", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "agent_id required for fast mode")
 		return
 	}
 	if len(req.AgentID) < 8 || len(req.AgentID) > 200 {
-		http.Error(w, "agent_id must be between 8 and 200 characters", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "agent_id must be between 8 and 200 characters")
 		return
 	}
 	if req.Title == "" {
 		req.Title = "Untitled file"
 	}
 	if len(req.Files) == 0 {
-		http.Error(w, "files required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "files required")
 		return
 	}
 	if _, ok := req.Files["index.html"]; !ok {
-		http.Error(w, "files.index.html required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "files.index.html required")
 		return
 	}
 	limits := fastPublishLimitsFromEnv()
 	if len(req.Files) > limits.MaxFiles {
-		http.Error(w, "too many files", http.StatusRequestEntityTooLarge)
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "too many files")
 		return
 	}
 	var sizeBytes int64
 	for name, content := range req.Files {
 		if _, err := cleanPublicationPath(name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		fileSize := int64(len([]byte(content)))
 		if fileSize > limits.MaxFileBytes {
-			http.Error(w, "file too large: "+name, http.StatusRequestEntityTooLarge)
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "file too large: "+name)
 			return
 		}
 		sizeBytes += fileSize
 	}
 	if sizeBytes > limits.MaxRequestBytes {
-		http.Error(w, "publish request too large", http.StatusRequestEntityTooLarge)
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "publish request too large")
 		return
 	}
 	agent, err := s.Store.EnsureAgent(HashToken("agent:"+req.AgentID), req.AgentName, ip, now)
@@ -1178,7 +1206,7 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if !agent.BlockedAt.IsZero() {
-		http.Error(w, "agent blocked: "+agent.BlockedReason, http.StatusTooManyRequests)
+		writeAPIError(w, http.StatusTooManyRequests, "agent blocked: "+agent.BlockedReason)
 		return
 	}
 	usage, err := s.Store.FastUsage(agent.ID, ip, now.Add(-time.Hour), now)
@@ -1187,11 +1215,11 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if usage.IPCount >= limits.MaxIPPublishesPerHour || usage.AgentCount >= limits.MaxAgentPublishesPerHour {
-		http.Error(w, "fast publish rate limit exceeded", http.StatusTooManyRequests)
+		writeAPIError(w, http.StatusTooManyRequests, "fast publish rate limit exceeded")
 		return
 	}
 	if usage.IPStorage+sizeBytes > limits.MaxIPStorageBytes || usage.AgentStorage+sizeBytes > limits.MaxAgentStorageBytes {
-		http.Error(w, "fast publish storage limit exceeded", http.StatusRequestEntityTooLarge)
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "fast publish storage limit exceeded")
 		return
 	}
 	expiresAt := req.ExpiresAt
@@ -1202,7 +1230,7 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		expiresAt = now.Add(limits.DefaultTTL)
 	}
 	if expiresAt.After(now.Add(limits.MaxTTL)) {
-		http.Error(w, "fast publications must expire within "+limits.MaxTTL.String(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "fast publications must expire within "+limits.MaxTTL.String())
 		return
 	}
 	visibility := strings.ToLower(strings.TrimSpace(req.Visibility))
@@ -1210,16 +1238,16 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		visibility = "public"
 	}
 	if visibility != "public" && visibility != "recipients" {
-		http.Error(w, "fast mode supports visibility public or recipients", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "fast mode supports visibility public or recipients")
 		return
 	}
 	shareTargets, err := normalizeShareTargets(req.Share.Emails)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if visibility == "recipients" && len(shareTargets) == 0 {
-		http.Error(w, "share.emails required for fast recipient sharing", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "share.emails required for fast recipient sharing")
 		return
 	}
 	publication := Publication{
@@ -1239,7 +1267,7 @@ func (s *Server) createFastPublication(w http.ResponseWriter, r *http.Request, r
 		clean, err := s.Store.WritePublicationFile(publication.ID, name, []byte(content))
 		if err != nil {
 			_ = s.Store.DeletePublicationDir(publication.ID)
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		publication.Files = append(publication.Files, clean)
@@ -2596,7 +2624,7 @@ func (s *Server) requireAutomationUser(w http.ResponseWriter, r *http.Request) *
 	}
 	auth := strings.TrimPrefix(r.Header.Get("authorization"), "Bearer ")
 	if auth == "" {
-		http.Error(w, "session or bearer api key required for registered mode. Unauthenticated agent publish? Use mode=fast with agent_id; see /llms.txt", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "session or bearer api key required for registered mode")
 		return nil
 	}
 	user, err := s.Store.UserByAPIKey(HashToken(auth), time.Now())
@@ -2605,7 +2633,7 @@ func (s *Server) requireAutomationUser(w http.ResponseWriter, r *http.Request) *
 		return nil
 	}
 	if user == nil {
-		http.Error(w, "invalid api key. Unauthenticated agent publish? Use mode=fast with agent_id; see /llms.txt", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "invalid api key")
 	}
 	return user
 }
@@ -2824,7 +2852,7 @@ func ownedPublicationSet(publications []Publication, ownerID string) map[string]
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid json")
 		return false
 	}
 	return true
@@ -2837,8 +2865,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func writeAPIError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]any{
+		"error": message,
+		"hint":  "No token is required for default agent publishing. Use mode=fast with agent_id and include files.index.html. See /llms.txt.",
+	})
+}
+
 func methodNotAllowed(w http.ResponseWriter) {
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 func trimAPIVersionPath(path string) string {
@@ -3182,6 +3217,8 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-content-type-options", "nosniff")
 		w.Header().Set("referrer-policy", "strict-origin-when-cross-origin")
+		w.Header().Add("link", `</llms.txt>; rel="llms-txt"`)
+		w.Header().Add("link", `</llms.txt>; rel="llms"`)
 		next.ServeHTTP(w, r)
 	})
 }

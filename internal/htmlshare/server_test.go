@@ -287,6 +287,63 @@ func TestFastPublishDoesNotRequireEmailOrAPIKey(t *testing.T) {
 	})
 }
 
+func TestAgentDiscoverySignalsNoTokenPublish(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: store, AppURL: "http://example.test", SessionSecret: "test-secret"}
+	ts := httptest.NewServer(server.Routes())
+	defer ts.Close()
+	server.AppURL = ts.URL
+
+	homeResp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = homeResp.Body.Close()
+	if !strings.Contains(strings.Join(homeResp.Header.Values("link"), ","), `</llms.txt>; rel="llms"`) {
+		t.Fatalf("missing llms link header: %v", homeResp.Header.Values("link"))
+	}
+	rawHome, err := os.ReadFile("../../web/home/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rawHome), `rel="llms"`) || !strings.Contains(string(rawHome), "No token by default") {
+		t.Fatalf("home does not expose no-token agent instructions")
+	}
+
+	discoveryResp, err := http.Get(ts.URL + "/api/v1/publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer discoveryResp.Body.Close()
+	if discoveryResp.StatusCode != http.StatusOK {
+		t.Fatalf("discovery status = %d", discoveryResp.StatusCode)
+	}
+	var discovery map[string]any
+	if err := json.NewDecoder(discoveryResp.Body).Decode(&discovery); err != nil {
+		t.Fatal(err)
+	}
+	if discovery["auth_required"] != false || discovery["default_mode"] != "fast" || !strings.Contains(discovery["curl"].(string), "mode\":\"fast") {
+		t.Fatalf("unexpected publish discovery: %+v", discovery)
+	}
+
+	errorResp := postJSON(t, ts.URL+"/api/publish", "", map[string]any{
+		"mode":     "fast",
+		"agent_id": "codex-session-12345",
+		"files":    map[string]string{"style.css": "body{}"},
+	})
+	if errorResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("error status = %d", errorResp.StatusCode)
+	}
+	var errorBody map[string]string
+	decode(t, errorResp, &errorBody)
+	if errorBody["error"] != "files.index.html required" || !strings.Contains(errorBody["hint"], "No token is required") {
+		t.Fatalf("unexpected API error: %+v", errorBody)
+	}
+}
+
 func TestFastPublishCanRestrictToEmailRecipients(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

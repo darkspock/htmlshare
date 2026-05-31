@@ -30,6 +30,14 @@ Content-Type: application/json
 No bearer, no signup, no OAuth, no MCP.
 Publication expires in 24h by default. For persistence, audit or account-owned sharing, use the registered flow below.
 
+Copy-ready curl example:
+
+```bash
+curl -X POST https://share.metricauno.com/api/publish \
+  -H 'content-type: application/json' \
+  --data '{"mode":"fast","agent_id":"your-agent-id","title":"My report","visibility":"public","files":{"index.html":"<!doctype html><html><body><h1>My report</h1></body></html>"}}'
+```
+
 Most agent use cases DO NOT require registration, OAuth, MCP, or an `hsk_...` token.
 
 If the user says "publish this", "share this HTML", "send me a link", "create a temporary review link", or similar, use fast mode.
