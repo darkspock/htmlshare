@@ -617,7 +617,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 			"default_mode":  "fast",
 			"llms_txt":      s.AppURL + "/llms.txt",
 			"openapi_url":   s.AppURL + "/api",
-			"curl": `curl -X POST https://share.metricauno.com/api/publish \
+			"curl": `curl -X POST https://share.metricauno.com/api/v1/publish \
   -H 'content-type: application/json' \
   --data '{"mode":"fast","agent_id":"your-agent-id","title":"My report","visibility":"public","files":{"index.html":"<!doctype html><html><body><h1>My report</h1></body></html>"}}'`,
 			"example": map[string]any{

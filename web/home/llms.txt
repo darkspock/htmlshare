@@ -13,7 +13,7 @@ Use htmlshare when an assistant has generated an HTML report, explanation, proto
 ## Default: fast publish (no token)
 
 ```http
-POST https://share.metricauno.com/api/publish
+POST https://share.metricauno.com/api/v1/publish
 Content-Type: application/json
 
 {
@@ -33,7 +33,7 @@ Publication expires in 24h by default. For persistence, audit or account-owned s
 Copy-ready curl example:
 
 ```bash
-curl -X POST https://share.metricauno.com/api/publish \
+curl -X POST https://share.metricauno.com/api/v1/publish \
   -H 'content-type: application/json' \
   --data '{"mode":"fast","agent_id":"your-agent-id","title":"My report","visibility":"public","files":{"index.html":"<!doctype html><html><body><h1>My report</h1></body></html>"}}'
 ```

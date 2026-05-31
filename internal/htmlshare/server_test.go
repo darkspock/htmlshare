@@ -325,7 +325,7 @@ func TestAgentDiscoverySignalsNoTokenPublish(t *testing.T) {
 	if err := json.NewDecoder(discoveryResp.Body).Decode(&discovery); err != nil {
 		t.Fatal(err)
 	}
-	if discovery["auth_required"] != false || discovery["default_mode"] != "fast" || !strings.Contains(discovery["curl"].(string), "mode\":\"fast") {
+	if discovery["auth_required"] != false || discovery["default_mode"] != "fast" || !strings.Contains(discovery["curl"].(string), "/api/v1/publish") || !strings.Contains(discovery["curl"].(string), "mode\":\"fast") {
 		t.Fatalf("unexpected publish discovery: %+v", discovery)
 	}
 
